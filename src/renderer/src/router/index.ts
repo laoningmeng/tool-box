@@ -38,6 +38,12 @@ const router = createRouter({
           meta: { title: '配置管理', group: '3D 模型管理' }
         },
         {
+          path: 'models/lab/:id',
+          name: 'model-lab',
+          component: () => import('@renderer/views/models/lab.vue'),
+          meta: { title: '实验台', group: '3D 模型管理' }
+        },
+        {
           path: 'workflow',
           name: 'workflow',
           component: () => import('@renderer/views/workflow/index.vue'),

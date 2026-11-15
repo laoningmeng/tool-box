@@ -1,22 +1,50 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, EditPen, FolderOpened, Refresh, Search, Upload } from '@element-plus/icons-vue'
+import {
+  Box,
+  Delete,
+  MagicStick,
+  Refresh,
+  Search,
+  Upload,
+  View
+} from '@element-plus/icons-vue'
 import { storeToRefs } from 'pinia'
 import { MODEL_FORMAT_OPTIONS, MODEL_SOURCE_META, MODEL_SOURCE_OPTIONS } from '@shared/constants'
 import type { ModelAsset, ModelSource } from '@shared/types'
 import { useModelStore } from '@renderer/stores/models'
 import { formatBytes, formatDateTime } from '@renderer/utils/format'
+import ModelPreviewDialog from './components/ModelPreviewDialog.vue'
 
 /**
- * 3D 模型列表：登记本机导出的模型（Tripo / Meshy / Blender）。
- * 库只做引用，不复制源文件；移除只出库，不删文件。
+ * 3D 模型列表（卡片视图）。
+ * 每张卡片：来源色预览区 + 名称/大小 + 预览 / 实验台 / 删除 三个操作。
  */
 
 const store = useModelStore()
+const router = useRouter()
 const { items, summary, loading, importing, keyword, source, format, hasFilters } = storeToRefs(store)
 
-const totalSize = computed(() => formatBytes(summary.value?.bytes ?? 0))
+const previewVisible = ref(false)
+const previewModel = ref<ModelAsset | null>(null)
+const dialogVisible = ref(false)
+const editing = ref<ModelAsset | null>(null)
+
+const form = reactive({
+  name: '',
+  source: 'unknown' as ModelSource,
+  tags: [] as string[],
+  note: ''
+})
+
+const THUMB_GRADIENTS: Record<ModelSource, string> = {
+  tripo: 'linear-gradient(135deg, #0f766e 0%, #10b981 100%)',
+  meshy: 'linear-gradient(135deg, #92400e 0%, #f59e0b 100%)',
+  blender: 'linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%)',
+  unknown: 'linear-gradient(135deg, #334155 0%, #64748b 100%)'
+}
 
 onMounted(() => {
   void store.refresh()
@@ -24,6 +52,10 @@ onMounted(() => {
 
 function sourceMeta(value: ModelAsset['source']) {
   return MODEL_SOURCE_META[value] ?? MODEL_SOURCE_META.unknown
+}
+
+function thumbStyle(item: ModelAsset): { background: string } {
+  return { background: THUMB_GRADIENTS[item.source] ?? THUMB_GRADIENTS.unknown }
 }
 
 async function handleImport(): Promise<void> {
@@ -42,12 +74,21 @@ async function handleImport(): Promise<void> {
   }
 }
 
-async function handleReveal(item: ModelAsset): Promise<void> {
-  try {
-    await store.reveal(item.id)
-  } catch (error) {
-    ElMessage.error((error as Error).message)
+function openPreview(item: ModelAsset): void {
+  if (item.exists === false) {
+    ElMessage.warning('文件已被移动或删除，无法预览')
+    return
   }
+  previewModel.value = item
+  previewVisible.value = true
+}
+
+function openLab(item: ModelAsset): void {
+  if (item.exists === false) {
+    ElMessage.warning('文件已被移动或删除，无法进入实验台')
+    return
+  }
+  void router.push({ name: 'model-lab', params: { id: item.id } })
 }
 
 async function handleRemove(item: ModelAsset): Promise<void> {
@@ -55,26 +96,21 @@ async function handleRemove(item: ModelAsset): Promise<void> {
     await ElMessageBox.confirm(
       `确定从模型库移除「${item.name}」？只移除登记记录，不会删除磁盘上的文件。`,
       '移除模型',
-      { type: 'warning', confirmButtonText: '移除', cancelButtonText: '取消' }
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
     )
   } catch {
     return
   }
   const ok = await store.remove(item.id)
-  if (ok) ElMessage.success('已移除')
-  else ElMessage.error('移除失败')
+  if (ok) {
+    if (previewModel.value?.id === item.id) previewVisible.value = false
+    ElMessage.success('已删除')
+  } else {
+    ElMessage.error('删除失败')
+  }
 }
 
 /* ------------------------------- 编辑元信息 ------------------------------- */
-
-const dialogVisible = ref(false)
-const editing = ref<ModelAsset | null>(null)
-const form = reactive({
-  name: '',
-  source: 'unknown' as ModelSource,
-  tags: [] as string[],
-  note: ''
-})
 
 function openEdit(item: ModelAsset): void {
   editing.value = item
@@ -82,6 +118,7 @@ function openEdit(item: ModelAsset): void {
   form.source = item.source
   form.tags = [...item.tags]
   form.note = item.note
+  previewVisible.value = false
   dialogVisible.value = true
 }
 
@@ -129,7 +166,7 @@ async function handleSearch(): Promise<void> {
         <div>
           <h2 class="panel__title">模型库</h2>
           <p class="panel__subtitle">
-            共 {{ items.length }} 个 · 占用 {{ totalSize }}
+            共 {{ items.length }} 个 · 占用 {{ formatBytes(summary?.bytes ?? 0) }}
             <span v-if="hasFilters" class="text-muted">（已筛选）</span>
           </p>
         </div>
@@ -166,53 +203,58 @@ async function handleSearch(): Promise<void> {
         </div>
       </header>
 
-      <div v-loading="loading" class="panel__body panel__body--flush">
-        <el-table v-if="items.length > 0" :data="items" class="model-table">
-          <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip>
-            <template #default="{ row }">
-              <div class="model-name">
-                <strong>{{ row.name }}</strong>
-                <span v-if="row.exists === false" class="model-name__badge">文件丢失</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="来源" width="110">
-            <template #default="{ row }">
-              <el-tag size="small" effect="light" :type="sourceMeta(row.source).tone">
-                {{ sourceMeta(row.source).label }}
+      <div v-loading="loading" class="panel__body">
+        <div v-if="items.length > 0" class="model-grid">
+          <article
+            v-for="item in items"
+            :key="item.id"
+            class="model-card"
+            :class="{ 'is-missing': item.exists === false }"
+          >
+            <div class="model-card__thumb" :style="thumbStyle(item)">
+              <el-icon class="model-card__icon"><Box /></el-icon>
+              <span class="model-card__format mono">{{ String(item.format).toUpperCase() }}</span>
+              <el-tag
+                class="model-card__source"
+                size="small"
+                effect="dark"
+                :type="sourceMeta(item.source).tone"
+              >
+                {{ sourceMeta(item.source).label }}
               </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="格式" width="90">
-            <template #default="{ row }">
-              <span class="mono">{{ String(row.format).toUpperCase() }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="大小" width="110">
-            <template #default="{ row }">
-              <span class="num">{{ formatBytes(row.size) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="路径" min-width="240" show-overflow-tooltip>
-            <template #default="{ row }">
-              <span class="mono text-muted">{{ row.path }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="更新时间" width="160">
-            <template #default="{ row }">
-              <span class="num text-muted">{{ formatDateTime(row.updatedAt, true) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="190" fixed="right">
-            <template #default="{ row }">
-              <el-button link type="primary" size="small" :icon="FolderOpened" :disabled="row.exists === false" @click="handleReveal(row)">
-                定位
+              <span v-if="item.exists === false" class="model-card__missing">文件丢失</span>
+            </div>
+
+            <div class="model-card__body">
+              <h3 class="model-card__name" :title="item.name">{{ item.name }}</h3>
+              <p class="model-card__meta">
+                {{ formatBytes(item.size) }} · {{ formatDateTime(item.updatedAt, true) }}
+              </p>
+            </div>
+
+            <div class="model-card__actions">
+              <el-button
+                size="small"
+                :icon="View"
+                :disabled="item.exists === false"
+                @click="openPreview(item)"
+              >
+                预览
               </el-button>
-              <el-button link type="primary" size="small" :icon="EditPen" @click="openEdit(row)">编辑</el-button>
-              <el-button link type="danger" size="small" :icon="Delete" @click="handleRemove(row)">移除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+              <el-button
+                size="small"
+                :icon="MagicStick"
+                :disabled="item.exists === false"
+                @click="openLab(item)"
+              >
+                实验台
+              </el-button>
+              <el-button size="small" type="danger" plain :icon="Delete" @click="handleRemove(item)">
+                删除
+              </el-button>
+            </div>
+          </article>
+        </div>
 
         <el-empty v-else-if="!loading" :description="hasFilters ? '没有匹配的模型' : '模型库还是空的'">
           <el-button v-if="hasFilters" @click="store.resetFilters()">清空筛选</el-button>
@@ -220,6 +262,8 @@ async function handleSearch(): Promise<void> {
         </el-empty>
       </div>
     </section>
+
+    <ModelPreviewDialog v-model="previewVisible" :model="previewModel" @edit="openEdit" />
 
     <el-dialog v-model="dialogVisible" title="编辑模型信息" width="520px">
       <el-form label-width="76px" label-position="left">
@@ -268,38 +312,114 @@ async function handleSearch(): Promise<void> {
 }
 
 .toolbar__search {
-  width: 220px;
+  width: 210px;
 }
 
 .toolbar__select {
-  width: 140px;
+  width: 130px;
 }
 
-.model-table {
-  width: 100%;
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(252px, 1fr));
+  gap: 14px;
 }
 
-.model-name {
+.model-card {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  overflow: hidden;
+  transition: border-color var(--dur-fast) linear, box-shadow var(--dur-fast) linear,
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.model-card:hover {
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.model-card.is-missing {
+  opacity: 0.72;
+}
+
+.model-card__thumb {
+  position: relative;
+  height: 118px;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.model-card__icon {
+  font-size: 42px;
+  opacity: 0.9;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.28));
+}
+
+.model-card__format {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.model-card__source {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+}
+
+.model-card__missing {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: rgba(239, 68, 68, 0.92);
+  color: #fff;
+}
+
+.model-card__body {
+  padding: 12px 14px 6px;
   min-width: 0;
 }
 
-.model-name strong {
-  font-weight: 550;
+.model-card__name {
+  margin: 0 0 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.model-name__badge {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: var(--radius-pill);
-  font-size: 10.5px;
-  color: var(--danger);
-  background: var(--danger-soft);
+.model-card__meta {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.model-card__actions {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px 14px;
+  margin-top: auto;
+}
+
+.model-card__actions :deep(.el-button) {
+  flex: 1;
+  margin-left: 0;
 }
 
 .dialog-path {

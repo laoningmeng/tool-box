@@ -24,7 +24,8 @@ npm run dist                # 打包 Windows NSIS 安装包到 release/
 | --- | --- | --- |
 | 工作台 | `#/dashboard` | 欢迎区 + 4 张统计卡 + 最近资源表，数据来自本地数据库 |
 | 资源管理 | `#/resources` | 通用增删改查：搜索、分组/状态筛选、分页、弹窗表单校验 |
-| 3D 模型管理 | `#/models` | 模型列表：导入本机导出的 3D 文件（glb/gltf/fbx/obj/blend），自动识别 Tripo / Meshy / Blender 来源，统计与筛选 |
+| 3D 模型管理 | `#/models` | 模型列表（卡片）：导入本机导出的 3D 文件，自动识别 Tripo / Meshy / Blender 来源；每张卡片可预览、进实验台、删除 |
+| ↳ 实验台 | `#/models/lab/:id` | 大画布调参：自动旋转 / 线框 / 网格 / 背景色 / 光照，实时三角形与尺寸统计，一键截图 |
 | ↳ 配置管理 | `#/models/config` | Tripo / Meshy API Key（safeStorage 加密落库，只回显掩码）+ 默认导入目录 + 来源识别开关 |
 | 工作流管理 | `#/workflow` | 流程列表（分类聚合、上传 API 格式 JSON、解析报告）+ 执行页（参数表单、进度轮询、出图预览） |
 | 系统设置 | `#/settings` | 基础设置 / 外观（主题色即时生效）/ 存储与数据 / 关于系统 四栏 |
@@ -110,10 +111,20 @@ GET  /api/comfy/output       取回生成结果          POST /api/comfy/upload
 - 去重：同一绝对路径只登记一次（Windows 不区分大小写）；重复导入会提示「跳过 N 个已存在」
 - 移除：只出库，**不删磁盘文件**；列表会实时检查文件是否还在，丢失时标「文件丢失」并禁用「定位」
 - 统计：总数 / 三种来源数量 / 总体积
+- 卡片视图：来源色缩略区 + 名称/大小/更新时间 + **预览 / 实验台 / 删除** 三个操作
+- 预览：弹窗内用 three.js（GLTFLoader + OrbitControls）实时渲染，显示三角形数、网格数、真实尺寸（米），
+  可切自动旋转与线框；底部还能「编辑信息」「在文件夹中显示」
+- 实验台：同一套渲染器放进独立页，右侧可调自动旋转 / 线框 / 接地网格 / 背景色 / 光照强度，
+  一键重置视角、截图保存 PNG
 - API Key：配置页填写的 Tripo、Meshy Key 由主进程用 `safeStorage`（Windows DPAPI / macOS Keychain）
   加密后写入 `database.json`，渲染层只能拿到 `tsk_••••abcd` 这样的掩码，**明文不出主进程**
 
-`window.api.model.import(paths?)` 支持直接传路径数组（会跳过文件对话框），方便拖拽导入或自动化测试。
+> three.js 只支持 glb / gltf。fbx / obj / blend 会提示「暂不支持预览」；
+> 用了 Draco 压缩或外置 .bin 的 gltf 也会给出可读错误（可用 Blender 重新导出未压缩 glb）。
+> 另外 GLB 内嵌贴图走 `blob:`，`index.html` 的 CSP 里 `connect-src` 必须允许 `blob:`，否则模型会渲染成白模。
+
+`window.api.model.import(paths?)` 支持直接传路径数组（会跳过文件对话框），方便拖拽导入或自动化测试；
+`window.api.model.readFile(id)` 返回文件字节，预览与实验台共用。
 
 ## 常见改造点
 

@@ -38,7 +38,8 @@ export const IPC = {
     import: 'model:import',
     update: 'model:update',
     remove: 'model:remove',
-    reveal: 'model:reveal'
+    reveal: 'model:reveal',
+    read: 'model:read'
   },
   modelConfig: {
     get: 'model-config:get',

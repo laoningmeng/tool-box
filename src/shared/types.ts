@@ -341,6 +341,8 @@ export interface ModelApi {
   import(paths?: string[]): Promise<ModelImportResult>
   update(id: string, input: ModelInput): Promise<ModelAsset>
   remove(id: string): Promise<{ ok: boolean }>
+  /** 读取模型文件字节（预览 / 实验台用），只读、不落盘 */
+  readFile(id: string): Promise<Uint8Array>
   /** 在系统文件管理器中定位该模型 */
   reveal(id: string): Promise<void>
 }

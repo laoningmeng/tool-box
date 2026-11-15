@@ -83,6 +83,7 @@ const api: BridgeApi = {
     update: (id: string, input: ModelInput): Promise<ModelAsset> =>
       ipcRenderer.invoke(IPC.model.update, id, input),
     remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.model.remove, id),
+    readFile: (id: string): Promise<Uint8Array> => ipcRenderer.invoke(IPC.model.read, id),
     reveal: (id: string): Promise<void> => ipcRenderer.invoke(IPC.model.reveal, id)
   },
   modelConfig: {

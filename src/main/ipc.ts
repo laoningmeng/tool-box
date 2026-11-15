@@ -50,6 +50,7 @@ import {
   importModels,
   listModels,
   pickImportDir,
+  readModelFile,
   removeModel,
   revealModel,
   saveModelConfig,
@@ -266,6 +267,7 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.model.update, (_event, id: string, input: ModelInput) => updateModel(id, input))
   ipcMain.handle(IPC.model.remove, (_event, id: string) => removeModel(id))
   ipcMain.handle(IPC.model.reveal, (_event, id: string) => revealModel(id))
+  ipcMain.handle(IPC.model.read, (_event, id: string) => readModelFile(id))
   ipcMain.handle(IPC.modelConfig.get, () => getModelConfigView())
   ipcMain.handle(IPC.modelConfig.save, (_event, patch: ModelConfigPatch) => saveModelConfig(patch))
   ipcMain.handle(IPC.modelConfig.pickDir, (event) => pickImportDir(BrowserWindow.fromWebContents(event.sender)))

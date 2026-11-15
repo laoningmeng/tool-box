@@ -209,6 +209,15 @@ export function revealModel(id: string): void {
   shell.showItemInFolder(target.path)
 }
 
+/** 读取模型字节，供渲染层用 three.js 预览；大文件会有一次性拷贝开销 */
+export function readModelFile(id: string): Uint8Array {
+  const target = getDb().models.find((item) => item.id === id)
+  if (!target) throw new Error('模型不存在')
+  if (!fs.existsSync(target.path)) throw new Error('文件已被移动或删除')
+  const buffer = fs.readFileSync(target.path)
+  return new Uint8Array(buffer)
+}
+
 /* ------------------------------ 配置与密钥 ------------------------------ */
 
 function seal(value: string): string {

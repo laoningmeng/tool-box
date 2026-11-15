@@ -75,6 +75,18 @@ export const useModelStore = defineStore('models', () => {
     await window.api.model.reveal(id)
   }
 
+  /** 模型字节缓存（只留最近一个，避免 70MB 级别的模型堆内存） */
+  let cachedId = ''
+  let cachedBytes: Uint8Array | null = null
+
+  async function readBytes(id: string): Promise<Uint8Array> {
+    if (cachedId === id && cachedBytes) return cachedBytes
+    const bytes = await window.api.model.readFile(id)
+    cachedId = id
+    cachedBytes = bytes
+    return bytes
+  }
+
   function resetFilters(): void {
     keyword.value = ''
     source.value = 'all'
@@ -118,6 +130,7 @@ export const useModelStore = defineStore('models', () => {
     update,
     remove,
     reveal,
+    readBytes,
     resetFilters,
     loadConfig,
     saveConfig,
