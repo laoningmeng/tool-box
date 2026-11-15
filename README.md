@@ -137,7 +137,8 @@ GET  /api/comfy/output       取回生成结果          POST /api/comfy/upload
   - **部件分组**：左侧 `Ctrl/⌘ 点选` 可多选、`Shift` 连选；右栏「保存为分组」起个名字（如「双手持枪」）。
     分组行三个操作：**应用**（只显示这些部件）、**导出 glb**（把该组烘焙成独立静态模型，保存对话框选路径，
     自动登记进模型库）、**删除**。分组按部件结构路径持久化，重启后仍在
-  - 骨骼可视化用 `SkeletonHelper`（可开关），选中骨骼画黄色标记球，选中部件加一层暖色自发光
+  - 骨骼可视化：自绘「连线 + 关节球」叠加层（不用 SkeletonHelper，它只有细线没有节点），
+    关节球按**屏幕像素**定尺寸，缩放视角时大小不变；选中的骨骼套一圈黄色圆环（颜色跟「高亮」设置走）
   - 兼容「纯线条导出」的模型（Tripo 有些转格式产物只有 LineSegments + Bone）：这类对象也会列进部件，
     三角面显示 0；没有 SkinnedMesh 时会回退扫描 `Bone` 节点来生成骨架树
 - API Key：配置页填写的 Tripo、Meshy Key 由主进程用 `safeStorage`（Windows DPAPI / macOS Keychain）

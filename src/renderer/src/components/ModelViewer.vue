@@ -77,7 +77,19 @@ let gridHelper: THREE.GridHelper | null = null
 let current: THREE.Group | null = null
 let pmrem: THREE.PMREMGenerator | null = null
 let envTexture: THREE.Texture | null = null
-let skeletonHelper: THREE.SkeletonHelper | null = null
+/**
+ * 骨架叠加层：骨骼连线 + 每个关节的球体节点。
+ * 不用 THREE.SkeletonHelper，因为它只画细线、没有关节，动画播放时也难看清结构。
+ */
+let boneOverlay: {
+  group: THREE.Group
+  lines: THREE.LineSegments
+  joints: THREE.InstancedMesh
+  edges: Array<[THREE.Bone, THREE.Bone]>
+  bones: THREE.Bone[]
+} | null = null
+/** 当前选中的骨骼（标记环每帧跟着它走） */
+let selectedBone: THREE.Bone | null = null
 let boneMarker: THREE.Mesh | null = null
 /** 选中高亮改过的材质，取消选中时要还原 */
 let highlighted: Array<{ material: THREE.MeshStandardMaterial; emissive: THREE.Color; intensity: number }> = []
@@ -440,6 +452,7 @@ function clearSelectionVisual(): void {
     item.material.emissiveIntensity = item.intensity
   }
   highlighted = []
+  selectedBone = null
   if (boneMarker) {
     scene.remove(boneMarker)
     boneMarker.geometry.dispose()
@@ -474,32 +487,144 @@ function highlightBone(bone: THREE.Bone): void {
   if (!scene) return
   const world = new THREE.Vector3()
   bone.getWorldPosition(world)
-  const radius = Math.max(modelRadius * 0.008, 0.0015)
+  selectedBone = bone
+  // 单位圆环 + 每帧按屏幕像素缩放、始终朝向相机
   boneMarker = new THREE.Mesh(
-    new THREE.SphereGeometry(radius, 16, 12),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(props.highlightColor || '#ffb74d'), depthTest: false })
+    new THREE.TorusGeometry(1, 0.16, 10, 32),
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color(props.highlightColor || '#ffb74d'),
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.98
+    })
   )
   boneMarker.position.copy(world)
+  if (camera) boneMarker.quaternion.copy(camera.quaternion)
+  boneMarker.scale.setScalar(pixelRadiusAt(world, 9))
   boneMarker.renderOrder = 999
   scene.add(boneMarker)
 }
 
 /* ------------------------------- 骨架可视化 ------------------------------- */
 
-function refreshSkeletonHelper(): void {
-  if (!scene) return
-  if (skeletonHelper) {
-    scene.remove(skeletonHelper)
-    skeletonHelper.geometry.dispose()
-    ;(skeletonHelper.material as THREE.Material).dispose()
-    skeletonHelper = null
+const _v = new THREE.Vector3()
+const _m = new THREE.Matrix4()
+const _q = new THREE.Quaternion()
+const _s = new THREE.Vector3()
+
+/** 某个距离上「1 像素」对应多少世界单位 */
+function worldPerPixelAt(distance: number): number {
+  if (!camera || !renderer) return 0.005
+  const height = renderer.domElement.clientHeight || 800
+  return (2 * distance * Math.tan((camera.fov * Math.PI) / 360)) / height
+}
+
+/** 关节球尺寸按屏幕像素换算成世界尺寸，且按每根骨骼到相机的距离各自计算 */
+function pixelRadiusAt(position: THREE.Vector3, pixels: number): number {
+  if (!camera) return 0.01
+  const distance = camera.position.distanceTo(position)
+  return Math.max(pixels * worldPerPixelAt(distance), 1e-5)
+}
+
+function disposeSkeletonOverlay(): void {
+  if (!boneOverlay) return
+  if (scene) scene.remove(boneOverlay.group)
+  boneOverlay.lines.geometry.dispose()
+  ;(boneOverlay.lines.material as THREE.Material).dispose()
+  boneOverlay.joints.geometry.dispose()
+  ;(boneOverlay.joints.material as THREE.Material).dispose()
+  boneOverlay.joints.dispose()
+  boneOverlay = null
+}
+
+/** 每帧把关节球和连线对齐到骨骼当前世界位置（动画播放时也跟着动） */
+function updateSkeletonOverlay(): void {
+  if (!boneOverlay) return
+  const { edges, joints, bones, lines } = boneOverlay
+  const attribute = lines.geometry.attributes.position as THREE.BufferAttribute
+  let cursor = 0
+  for (const [bone, child] of edges) {
+    bone.getWorldPosition(_v)
+    attribute.setXYZ(cursor++, _v.x, _v.y, _v.z)
+    child.getWorldPosition(_v)
+    attribute.setXYZ(cursor++, _v.x, _v.y, _v.z)
   }
-  if (!props.showSkeleton || !current || boneObjects.size === 0) return
-  skeletonHelper = new THREE.SkeletonHelper(current)
-  ;(skeletonHelper.material as THREE.LineBasicMaterial).depthTest = false
-  ;(skeletonHelper.material as THREE.LineBasicMaterial).transparent = true
-  ;(skeletonHelper.material as THREE.LineBasicMaterial).opacity = 0.9
-  scene.add(skeletonHelper)
+  attribute.needsUpdate = true
+  lines.geometry.computeBoundingSphere()
+
+  for (let index = 0; index < bones.length; index += 1) {
+    bones[index].getWorldPosition(_v)
+    // 按各自到相机的距离换算，远近的关节在屏幕上一样大
+    _s.setScalar(pixelRadiusAt(_v, 3))
+    _m.compose(_v, _q, _s)
+    joints.setMatrixAt(index, _m)
+  }
+  joints.instanceMatrix.needsUpdate = true
+
+  // 选中的骨骼套一圈黄色圆环，始终正对相机
+  if (boneMarker && selectedBone) {
+    selectedBone.getWorldPosition(_v)
+    boneMarker.position.copy(_v)
+    if (camera) boneMarker.quaternion.copy(camera.quaternion)
+    boneMarker.scale.setScalar(pixelRadiusAt(_v, 9))
+    boneMarker.visible = true
+  }
+}
+function rebuildSkeletonOverlay(): void {
+  disposeSkeletonOverlay()
+  if (!scene || !props.showSkeleton || !current || boneObjects.size === 0) return
+
+  const bones = [...boneObjects.values()]
+  const boneSet = new Set<THREE.Bone>(bones)
+  const edges: Array<[THREE.Bone, THREE.Bone]> = []
+  for (const bone of bones) {
+    for (const child of bone.children) {
+      if (boneSet.has(child as THREE.Bone)) edges.push([bone, child as THREE.Bone])
+    }
+  }
+
+  const lineGeometry = new THREE.BufferGeometry()
+  lineGeometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(new Float32Array(Math.max(edges.length, 1) * 2 * 3), 3)
+  )
+  const lines = new THREE.LineSegments(
+    lineGeometry,
+    new THREE.LineBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false
+    })
+  )
+  lines.frustumCulled = false
+  lines.renderOrder = 900
+
+  // 关节球用单位球，每帧按屏幕像素缩放（见 updateSkeletonOverlay）
+  const joints = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(1, 12, 10),
+    new THREE.MeshBasicMaterial({
+      color: 0x67e8f9,
+      transparent: true,
+      opacity: 1,
+      depthTest: false,
+      depthWrite: false
+    }),
+    bones.length
+  )
+  joints.frustumCulled = false
+  joints.renderOrder = 901
+
+  const group = new THREE.Group()
+  group.name = 'skeleton-overlay'
+  group.add(lines)
+  group.add(joints)
+  scene.add(group)
+
+  boneOverlay = { group, lines, joints, edges, bones }
+  updateSkeletonOverlay()
 }
 
 /* ------------------------------- 加载与释放 ------------------------------- */
@@ -521,6 +646,7 @@ function disposeObject(object: THREE.Object3D): void {
 function clearModel(): void {
   if (!scene || !current) return
   clearSelectionVisual()
+  disposeSkeletonOverlay()
   if (mixer) {
     mixer.stopAllAction()
     mixer.uncacheRoot(current)
@@ -574,12 +700,13 @@ async function loadModel(bytes: Uint8Array | ArrayBuffer): Promise<void> {
     mixer = new THREE.AnimationMixer(gltf.scene)
     actions = gltf.animations.map((clip) => mixer!.clipAction(clip))
 
-    refreshSkeletonHelper()
     emit(
       'parsed',
       buildStructure(gltf.animations, `${fmt(size.x)} × ${fmt(size.y)} × ${fmt(size.z)}`)
     )
     analyzeSemantics(gltf.scene)
+    // 必须等 buildStructure 解析完骨骼（填充 boneObjects）再建骨架叠加层
+    rebuildSkeletonOverlay()
     emit('tick', { time: 0, duration: 0, playing: false, index: -1 })
   } catch (error) {
     const message = (error as Error)?.message || '模型解析失败'
@@ -793,6 +920,8 @@ function animate(): void {
   lastFrame = now
   if (mixer && activeAction && !activeAction.paused) mixer.update(delta)
   controls?.update()
+  // 骨骼在动，关节球和连线要跟着刷新
+  if (boneOverlay) updateSkeletonOverlay()
   if (renderer && scene && camera) renderer.render(scene, camera)
 
   if (activeAction && now - lastTick > 100) {
@@ -871,7 +1000,7 @@ onBeforeUnmount(() => {
   controls?.dispose()
   mixer = null
   clearModel()
-  refreshSkeletonHelper()
+  disposeSkeletonOverlay()
   envTexture?.dispose()
   pmrem?.dispose()
   renderer?.dispose()
@@ -909,7 +1038,7 @@ watch(
 watch(
   () => props.showSkeleton,
   () => {
-    refreshSkeletonHelper()
+    rebuildSkeletonOverlay()
   }
 )
 
