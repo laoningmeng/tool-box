@@ -1,0 +1,199 @@
+import path from 'node:path'
+import { BrowserWindow, dialog, shell } from 'electron'
+import type { ComfyInputs, ComfyJob, ComfyOutputData, ComfyRunRequest, ComfyStatus, ComfyWorkflow, WorkflowCategory } from '../../shared/types'
+import { getComfyUrl, getDb, persist } from '../store'
+import { pythonRunner } from '../python'
+import { log } from '../logger'
+
+/**
+ * 工作流模块的主进程服务：
+ * - 元数据存本地 JSON 数据库（store.workflows）
+ * - 状态 / 执行 / 出图 通过内置 Python 后端代理到 ComfyUI
+ */
+
+interface ApiEnvelope<T> {
+  ok: boolean
+  item?: T
+  items?: T
+  error?: string
+}
+
+async function ensureBackend(): Promise<void> {
+  if (!pythonRunner.available) {
+    throw new Error(
+      `未找到项目内置 Python 运行时（${pythonRunner.executable}），请先执行 npm run setup:python`
+    )
+  }
+  await pythonRunner.ensureRunning()
+}
+
+export async function getComfyStatus(): Promise<ComfyStatus> {
+  const url = getComfyUrl()
+  // 状态查询是"探测"语义：后端不可用时返回带 error 的状态，而不是抛错，
+  // 这样渲染层可以直接提示「未就绪」，其它 IPC 调用仍然会在需要时抛错。
+  const degraded = (error: string): ComfyStatus => ({
+    connected: false,
+    url,
+    version: '',
+    device: '',
+    vram: '',
+    queueRunning: 0,
+    queuePending: 0,
+    error
+  })
+
+  if (!pythonRunner.available) {
+    return degraded(
+      `未找到项目内置 Python 运行时（${pythonRunner.executable}），请先执行 npm run setup:python`
+    )
+  }
+
+  try {
+    await pythonRunner.ensureRunning()
+    const data = await pythonRunner.request<ApiEnvelope<ComfyStatus>>({
+      path: '/api/comfy/status',
+      timeout: 30000
+    })
+    return data.item ?? degraded('后端未返回 ComfyUI 状态')
+  } catch (error) {
+    return degraded((error as Error).message)
+  }
+}
+
+export function listWorkflows(category?: WorkflowCategory): ComfyWorkflow[] {
+  const items = getDb().workflows
+  return category ? items.filter((item) => item.category === category) : items
+}
+
+export function removeWorkflow(id: string): { ok: boolean } {
+  const db = getDb()
+  const target = db.workflows.find((item) => item.id === id)
+  if (!target) throw new Error('工作流不存在')
+  db.workflows = db.workflows.filter((item) => item.id !== id)
+  delete db.workflowGraphs[id]
+  persist()
+  log('info', '删除工作流', id)
+  return { ok: true }
+}
+
+export async function runWorkflow(payload: {
+  workflowId: string
+  workflowName?: string
+  category: WorkflowCategory
+  graph: Record<string, unknown>
+}): Promise<{ jobId: string }> {
+  await ensureBackend()
+  const data = await pythonRunner.request<ApiEnvelope<{ jobId?: string }>>({
+    method: 'POST',
+    path: '/api/comfy/run',
+    body: payload,
+    timeout: 60000
+  })
+  const jobId = data.item?.jobId
+  if (!jobId) throw new Error('后端未返回任务 id')
+  return { jobId }
+}
+
+export async function listJobs(category?: WorkflowCategory): Promise<ComfyJob[]> {
+  await ensureBackend()
+  const query = category ? `?category=${encodeURIComponent(category)}` : ''
+  const data = await pythonRunner.request<ApiEnvelope<ComfyJob[]>>({
+    path: `/api/comfy/jobs${query}`,
+    timeout: 30000
+  })
+  return data.items ?? []
+}
+
+export async function getJob(jobId: string): Promise<ComfyJob | null> {
+  await ensureBackend()
+  const data = await pythonRunner.request<ApiEnvelope<ComfyJob>>({
+    path: `/api/comfy/jobs/${encodeURIComponent(jobId)}`,
+    timeout: 30000
+  })
+  return data.item ?? null
+}
+
+export async function cancelJob(jobId: string): Promise<{ ok: boolean }> {
+  await ensureBackend()
+  await pythonRunner.request({
+    method: 'POST',
+    path: `/api/comfy/jobs/${encodeURIComponent(jobId)}/cancel`,
+    timeout: 15000
+  })
+  return { ok: true }
+}
+
+export async function uploadImage(
+  win: BrowserWindow | null
+): Promise<{ ok: boolean; canceled?: boolean; name?: string }> {
+  const options: Electron.OpenDialogOptions = {
+    title: '选择源图（将上传到 ComfyUI 的 input 目录）',
+    properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp'] }]
+  }
+  const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+  if (result.canceled || !result.filePaths.length) return { ok: false, canceled: true }
+
+  await ensureBackend()
+  const data = await pythonRunner.request<ApiEnvelope<{ name?: string }>>({
+    method: 'POST',
+    path: '/api/comfy/upload',
+    body: { path: result.filePaths[0] },
+    timeout: 120000
+  })
+  if (!data.item?.name) throw new Error('上传失败')
+  return { ok: true, name: data.item.name }
+}
+
+export async function getOutput(filename: string, subfolder: string): Promise<ComfyOutputData> {
+  await ensureBackend()
+  const query = `?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}`
+  const buffer = await pythonRunner.requestBuffer(`/api/comfy/output${query}`, 120000)
+  const ext = path.extname(filename).toLowerCase()
+  const mime =
+    ext === '.mp4'
+      ? 'video/mp4'
+      : ext === '.webm'
+        ? 'video/webm'
+        : ext === '.webp'
+          ? 'image/webp'
+          : ext === '.gif'
+            ? 'image/gif'
+            : 'image/png'
+  return { mime, bytes: buffer.length, dataUrl: `data:${mime};base64,${buffer.toString('base64')}` }
+}
+
+export async function openComfy(): Promise<void> {
+  await shell.openExternal(getComfyUrl())
+}
+
+/** 供执行阶段注入参数：把界面参数写进图里（按节点类型匹配） */
+export function injectInputs(graph: Record<string, unknown>, inputs: ComfyInputs): Record<string, unknown> {
+  const copy = JSON.parse(JSON.stringify(graph)) as Record<string, any>
+  const findSampler = () =>
+    Object.values(copy).find((node) => node?.class_type === 'KSampler' || node?.class_type === 'KSamplerAdvanced')
+  const sampler = findSampler() as Record<string, any> | undefined
+  if (sampler) {
+    const samplerInputs = (sampler.inputs ??= {})
+    if (Number.isFinite(inputs.steps)) samplerInputs.steps = inputs.steps
+    if (Number.isFinite(inputs.cfg)) samplerInputs.cfg = inputs.cfg
+    if (Number.isFinite(inputs.seed)) samplerInputs.seed = inputs.seed
+    if (Number.isFinite(inputs.denoise)) samplerInputs.denoise = inputs.denoise
+  }
+  for (const node of Object.values(copy) as Array<Record<string, any>>) {
+    const nodeInputs = (node.inputs ??= {})
+    if (node.class_type === 'CLIPTextEncode' && inputs.prompt && typeof nodeInputs.text === 'string') {
+      // 只覆盖第一个文本节点，避免把负向提示词也换掉
+      nodeInputs.text = inputs.prompt
+      inputs = { ...inputs, prompt: undefined }
+    }
+    if (node.class_type === 'EmptyLatentImage') {
+      if (Number.isFinite(inputs.width)) nodeInputs.width = inputs.width
+      if (Number.isFinite(inputs.height)) nodeInputs.height = inputs.height
+    }
+    if (node.class_type === 'LoadImage' && inputs.image) {
+      nodeInputs.image = inputs.image
+    }
+  }
+  return copy
+}

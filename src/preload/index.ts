@@ -1,0 +1,100 @@
+import { contextBridge, ipcRenderer } from 'electron'
+import { IPC } from '../shared/channels'
+import type {
+  AppSettings,
+  AppSystemInfo,
+  BackupResult,
+  BridgeApi,
+  ComfyJob,
+  ComfyOutputData,
+  ComfyParseResult,
+  ComfyRunRequest,
+  ComfyStatus,
+  ComfyWorkflow,
+  PagedResult,
+  PythonRuntimeInfo,
+  PythonStatus,
+  ResourceInput,
+  ResourceItem,
+  ResourceQuery,
+  ResourceSummary,
+  UpdateCheckResult,
+  WorkflowCategory
+} from '../shared/types'
+
+/**
+ * 渲染层唯一入口：只暴露明确的方法，不暴露 ipcRenderer / node API。
+ */
+
+const api: BridgeApi = {
+  settings: {
+    get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settings.get),
+    save: (patch: Partial<AppSettings>): Promise<AppSettings> =>
+      ipcRenderer.invoke(IPC.settings.save, patch),
+    reset: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settings.reset),
+    export: (): Promise<{ ok: boolean; file?: string; canceled?: boolean }> =>
+      ipcRenderer.invoke(IPC.settings.export),
+    import: (): Promise<{ ok: boolean; canceled?: boolean; settings?: AppSettings }> =>
+      ipcRenderer.invoke(IPC.settings.import)
+  },
+  system: {
+    info: (): Promise<AppSystemInfo> => ipcRenderer.invoke(IPC.system.info),
+    openPath: (target: 'userData' | 'logs' | 'data' | 'models'): Promise<void> =>
+      ipcRenderer.invoke(IPC.system.openPath, target),
+    pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(IPC.system.pickDirectory),
+    pickModelDirectory: (): Promise<string | null> =>
+      ipcRenderer.invoke(IPC.system.pickModelDirectory),
+    cacheSize: (): Promise<number> => ipcRenderer.invoke(IPC.system.cacheSize),
+    clearCache: (): Promise<number> => ipcRenderer.invoke(IPC.system.clearCache),
+    backupNow: (): Promise<BackupResult> => ipcRenderer.invoke(IPC.system.backupNow),
+    checkUpdate: (): Promise<UpdateCheckResult> => ipcRenderer.invoke(IPC.system.checkUpdate)
+  },
+  window: {
+    minimize: (): void => ipcRenderer.send(IPC.window.minimize),
+    toggleMaximize: (): void => ipcRenderer.send(IPC.window.toggleMaximize),
+    close: (): void => ipcRenderer.send(IPC.window.close),
+    isMaximized: (): Promise<boolean> => ipcRenderer.invoke(IPC.window.isMaximized),
+    setTitlebar: (options: { color: string; symbolColor: string }): void =>
+      ipcRenderer.send(IPC.window.setTitlebar, options)
+  },
+  resource: {
+    list: (query: ResourceQuery): Promise<PagedResult<ResourceItem>> =>
+      ipcRenderer.invoke(IPC.resource.list, query),
+    summary: (): Promise<ResourceSummary> => ipcRenderer.invoke(IPC.resource.summary),
+    create: (input: ResourceInput): Promise<ResourceItem> =>
+      ipcRenderer.invoke(IPC.resource.create, input),
+    update: (id: string, input: Partial<ResourceInput>): Promise<ResourceItem> =>
+      ipcRenderer.invoke(IPC.resource.update, id, input),
+    remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.resource.remove, id),
+    categories: (): Promise<string[]> => ipcRenderer.invoke(IPC.resource.categories)
+  },
+  python: {
+    status: (): Promise<PythonStatus> => ipcRenderer.invoke(IPC.python.status),
+    runtime: (): Promise<PythonRuntimeInfo> => ipcRenderer.invoke(IPC.python.runtime),
+    restart: (): Promise<PythonRuntimeInfo> => ipcRenderer.invoke(IPC.python.restart)
+  },
+  comfy: {
+    status: (): Promise<ComfyStatus> => ipcRenderer.invoke(IPC.comfy.status),
+    workflows: (category?: WorkflowCategory): Promise<ComfyWorkflow[]> =>
+      ipcRenderer.invoke(IPC.comfy.workflows, category),
+    parseFile: (filePath?: string): Promise<ComfyParseResult> =>
+      ipcRenderer.invoke(IPC.comfy.parse, filePath),
+    uploadWorkflow: (payload: Parameters<BridgeApi['comfy']['uploadWorkflow']>[0]): Promise<ComfyWorkflow> =>
+      ipcRenderer.invoke(IPC.comfy.upload, payload),
+    removeWorkflow: (id: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(IPC.comfy.remove, id),
+    run: (request: ComfyRunRequest): Promise<{ jobId: string }> =>
+      ipcRenderer.invoke(IPC.comfy.run, request),
+    jobs: (category?: WorkflowCategory): Promise<ComfyJob[]> =>
+      ipcRenderer.invoke(IPC.comfy.jobs, category),
+    job: (jobId: string): Promise<ComfyJob | null> => ipcRenderer.invoke(IPC.comfy.job, jobId),
+    cancel: (jobId: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.comfy.cancel, jobId),
+    uploadImage: (): Promise<{ ok: boolean; canceled?: boolean; name?: string }> =>
+      ipcRenderer.invoke(IPC.comfy.uploadImage),
+    output: (filename: string, subfolder: string): Promise<ComfyOutputData> =>
+      ipcRenderer.invoke(IPC.comfy.output, filename, subfolder),
+    openComfy: (): Promise<void> => ipcRenderer.invoke(IPC.comfy.open)
+  }
+}
+
+contextBridge.exposeInMainWorld('api', api)

@@ -1,0 +1,146 @@
+/* ==========================================================================
+   设计令牌（Design Tokens）
+   亮色为默认值，暗色在 html.dark 下覆盖。组件中请优先使用这些变量，
+   不要写死颜色，以便主题切换与主题色定制正常工作。
+   ========================================================================== */
+
+:root {
+  /* 品牌色：由 app store 依据「系统设置 - 主题色」动态注入 */
+  --accent: #4f46e5;
+  --accent-ink: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-softer: color-mix(in srgb, var(--accent) 7%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 32%, transparent);
+
+  /* 语义色 */
+  --success: #10b981;
+  --success-soft: rgba(16, 185, 129, 0.12);
+  --warning: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.14);
+  --danger: #ef4444;
+  --danger-soft: rgba(239, 68, 68, 0.12);
+  --info: #3b82f6;
+  --info-soft: rgba(59, 130, 246, 0.12);
+
+  /* 背景与表面 */
+  --bg-app: #f4f6fb;
+  --bg-app-accent: radial-gradient(1200px 600px at 12% -10%, #e8ecff 0%, transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, #e6f7fb 0%, transparent 55%);
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-subtle: #f7f9fc;
+  --bg-hover: #f1f5f9;
+  --bg-active: #e9eefb;
+
+  /* 文本 */
+  --text-primary: #0f172a;
+  --text-secondary: #4b5a6f;
+  --text-tertiary: #8a97a8;
+  --text-inverse: #ffffff;
+
+  /* 边框 */
+  --border-color: #e6eaf2;
+  --border-strong: #d5dce8;
+
+  /* 侧边栏（跟随主题：亮色为浅色面板，暗色为深色面板） */
+  --sidebar-bg: #ffffff;
+  --sidebar-text: #5b6b80;
+  --sidebar-text-active: var(--accent);
+  --sidebar-hover: #f3f6fc;
+  --sidebar-active: color-mix(in srgb, var(--accent) 10%, transparent);
+  --sidebar-border: #eef1f7;
+
+  /* 圆角 */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-pill: 999px;
+
+  /* 阴影 */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 10px 28px -12px rgba(15, 23, 42, 0.16), 0 2px 6px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 28px 56px -20px rgba(15, 23, 42, 0.24), 0 4px 12px rgba(15, 23, 42, 0.06);
+
+  /* 尺寸 */
+  --titlebar-height: 44px;
+  --header-height: 68px;
+  --sidebar-width: 236px;
+  --sidebar-width-collapsed: 76px;
+  --page-gap: 20px;
+
+  /*
+   * 自绘标题栏配色（跟随主题）：
+   * --titlebar-overlay 必须等于渐变终点的实色 —— Windows 原生窗口按钮区
+   * 由主进程 titleBarOverlay 铺一块纯色，渲染层通过 window.setTitlebar 在
+   * 启动和切换主题时同步（见 stores/app.ts 的 applyTitlebar）。
+   */
+  --titlebar-bg-from: #ffffff;
+  --titlebar-bg-mid: #fcfdff;
+  --titlebar-bg-to: #f6f8fc;
+  --titlebar-overlay: #f6f8fc;
+  --titlebar-fg: #1f2937;
+  --titlebar-symbol: #334155;
+  --titlebar-muted: #7d8b9d;
+  --titlebar-border: #e6eaf2;
+  --titlebar-pill-fg: #4338ca;
+  --titlebar-pill-bg: rgba(79, 70, 229, 0.08);
+  --titlebar-pill-border: rgba(79, 70, 229, 0.18);
+
+  /* 动效 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+}
+
+html.dark {
+  --success-soft: rgba(16, 185, 129, 0.16);
+  --warning-soft: rgba(245, 158, 11, 0.18);
+  --danger-soft: rgba(239, 68, 68, 0.16);
+  --info-soft: rgba(59, 130, 246, 0.18);
+
+  --bg-app: #0c1017;
+  --bg-app-accent: radial-gradient(1200px 600px at 12% -10%, rgba(79, 70, 229, 0.18) 0%, transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(6, 182, 212, 0.12) 0%, transparent 55%);
+  --bg-surface: #141a24;
+  --bg-elevated: #19202b;
+  --bg-subtle: #11161f;
+  --bg-hover: #1e2632;
+  --bg-active: #232c3b;
+
+  --text-primary: #e9eef7;
+  --text-secondary: #9dabbd;
+  --text-tertiary: #6c7b8f;
+  --text-inverse: #0c1017;
+
+  --border-color: #232c39;
+  --border-strong: #303b4b;
+
+  --sidebar-bg: linear-gradient(180deg, #0b111c 0%, #070b13 100%);
+  --sidebar-text: rgba(203, 213, 225, 0.66);
+  --sidebar-text-active: #ffffff;
+  --sidebar-hover: rgba(255, 255, 255, 0.05);
+  --sidebar-active: rgba(255, 255, 255, 0.09);
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+
+  --titlebar-bg-from: #0f172a;
+  --titlebar-bg-mid: #131c31;
+  --titlebar-bg-to: #0b1220;
+  --titlebar-overlay: #0b1220;
+  --titlebar-fg: #e2e8f0;
+  --titlebar-symbol: #e2e8f0;
+  --titlebar-muted: rgba(148, 163, 184, 0.85);
+  --titlebar-border: rgba(255, 255, 255, 0.06);
+  --titlebar-pill-fg: #c7d2fe;
+  --titlebar-pill-bg: rgba(99, 102, 241, 0.18);
+  --titlebar-pill-border: rgba(99, 102, 241, 0.28);
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 12px 30px -12px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 30px 60px -20px rgba(0, 0, 0, 0.7), 0 4px 12px rgba(0, 0, 0, 0.4);
+}

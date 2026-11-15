@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+out/
+dist/
+release/
+*.tsbuildinfo
+
+# 运行时 / 调试产物
+.tmp/
+.userdata/
+.appdata/
+screenshots/tmp/
+*.log
+npm-debug.log*
+debug.log
+
+# 项目自带 Python 运行时与模型（体积大，由 scripts/setup-python.ps1 与界面下载生成）
+runtime/python/
+runtime/indextts-src/
+runtime/python-*/
+models/
+.runtime/
+
+# editor / os
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.local
+.env.local
+.env.*.local

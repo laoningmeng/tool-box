@@ -1,0 +1,31 @@
+appId: com.qiongge.toolbox
+productName: 穷哥们的工具箱
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}'
+  - '!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}'
+extraResources:
+  - from: runtime/backend
+    to: runtime/backend
+    filter:
+      - '**/*'
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # icon: build/icon.ico  # 放好 256x256 图标后取消注释
+  artifactName: ${productName}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 穷哥们的工具箱
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
