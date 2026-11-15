@@ -5,7 +5,13 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
+import { buildRig, collectSkinnedMeshes, lateralSign } from '../rig/rig'
+import { autoDetectSemantics, missingRoles, roleBoneMap } from '../rig/semantics'
+import { generateAction } from '../rig/actions'
+import { ROLE_LABELS } from '../rig/types'
+import type { ActionKind, BoneRole, PoseClip, RigInfo, SemanticRig } from '../rig/types'
 import type {
+  SemanticSummary,
   ViewerBone,
   ViewerClip,
   ViewerPart,
@@ -53,6 +59,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   parsed: [structure: ViewerStructure]
+  semantics: [summary: SemanticSummary]
   tick: [state: { time: number; duration: number; playing: boolean; index: number }]
   error: [message: string]
 }>()
@@ -86,6 +93,11 @@ let lastFrame = performance.now()
 const partObjects = new Map<string, THREE.Object3D>()
 const partByKey = new Map<string, THREE.Object3D>()
 const boneObjects = new Map<string, THREE.Bone>()
+const boneByName = new Map<string, THREE.Bone>()
+/** 骨架语义引擎（rig-studio 移植）：只在有蒙皮骨骼时可用 */
+let rigInfo: RigInfo | null = null
+let semanticRig: SemanticRig | null = null
+let generatedClip: THREE.AnimationClip | null = null
 let modelRadius = 1
 let selectionId = ''
 
@@ -214,6 +226,7 @@ function collectBones(root: THREE.Object3D): THREE.Bone[] {
 
 function parseBones(root: THREE.Object3D): ViewerBone[] {
   boneObjects.clear()
+  boneByName.clear()
   const bones = collectBones(root)
   if (bones.length === 0) return []
 
@@ -222,6 +235,7 @@ function parseBones(root: THREE.Object3D): ViewerBone[] {
   const childCount = new Map<THREE.Object3D, number>()
   for (const bone of bones) {
     boneObjects.set(bone.uuid, bone)
+    if (bone.name) boneByName.set(bone.name, bone)
     const parent = bone.parent
     if (parent && boneSet.has(parent as THREE.Bone)) {
       childCount.set(parent, (childCount.get(parent) ?? 0) + 1)
@@ -263,6 +277,116 @@ function buildStructure(clips: THREE.AnimationClip[], sizeText: string): ViewerS
       size: sizeText,
       skinned: bones.length > 0
     }
+  }
+}
+
+/* ------------------------------- 骨骼语义 ------------------------------- */
+
+/** 用移植过来的 rig 引擎做语义识别：给骨骼贴角色标签，并决定动作库是否可用 */
+function analyzeSemantics(root: THREE.Object3D): void {
+  rigInfo = null
+  semanticRig = null
+  const empty: SemanticSummary = {
+    available: false,
+    boneCount: boneObjects.size,
+    roleCount: 0,
+    missing: [],
+    warnings: [],
+    roles: {}
+  }
+  const meshes = collectSkinnedMeshes(root)
+  if (meshes.length === 0 || boneObjects.size === 0) {
+    emit('semantics', { ...empty, warnings: ['该模型没有蒙皮骨骼，动作库不可用'] })
+    return
+  }
+  try {
+    rigInfo = buildRig(root, meshes)
+    semanticRig = autoDetectSemantics(rigInfo)
+    const roleMap = roleBoneMap(semanticRig)
+    const roles: Record<string, string> = {}
+    for (const [boneName, role] of Object.entries(semanticRig.bones)) {
+      const bone = boneByName.get(boneName)
+      if (bone) roles[bone.uuid] = ROLE_LABELS[role] ?? role
+    }
+    emit('semantics', {
+      available: true,
+      boneCount: rigInfo.bones.length,
+      roleCount: roleMap.size,
+      missing: missingRoles(semanticRig).map((role) => ROLE_LABELS[role] ?? role),
+      warnings: semanticRig.warnings ?? [],
+      roles
+    })
+  } catch (error) {
+    rigInfo = null
+    semanticRig = null
+    emit('semantics', {
+      ...empty,
+      warnings: [`语义识别失败：${(error as Error).message}`]
+    })
+  }
+}
+
+function poseClipToAnimationClip(pose: PoseClip): THREE.AnimationClip {
+  const tracks: THREE.KeyframeTrack[] = []
+  for (const track of pose.tracks) {
+    const bone = boneByName.get(track.bone)
+    if (!bone || track.times.length === 0) continue
+    const values: number[] = []
+    for (const quat of track.quats) values.push(quat.x, quat.y, quat.z, quat.w)
+    tracks.push(new THREE.QuaternionKeyframeTrack(`${bone.uuid}.quaternion`, track.times, values))
+    if (track.points && track.points.length === track.times.length) {
+      const positions: number[] = []
+      for (const point of track.points) positions.push(point.x, point.y, point.z)
+      tracks.push(new THREE.VectorKeyframeTrack(`${bone.uuid}.position`, track.times, positions))
+    }
+  }
+  return new THREE.AnimationClip(pose.name || 'action', pose.duration || 1, tracks)
+}
+
+function playAnimationClip(clip: THREE.AnimationClip): void {
+  if (!mixer) return
+  if (generatedClip && generatedClip !== clip) mixer.uncacheClip(generatedClip)
+  mixer.stopAllAction()
+  generatedClip = clip
+  const action = mixer.clipAction(clip)
+  action.reset()
+  action.setLoop(THREE.LoopRepeat, Infinity)
+  action.timeScale = 1
+  action.play()
+  activeAction = action
+  emit('tick', { time: 0, duration: clip.duration, playing: true, index: -1 })
+}
+
+/** 用内置动作库现场生成一个动作并播放（不需要模型自带动画） */
+function generateActionClip(kind: ActionKind): { ok: boolean; name?: string; message?: string } {
+  if (!rigInfo || !semanticRig) return { ok: false, message: '该模型没有可用骨骼，动作库不可用' }
+  const rig = rigInfo
+  const sem = semanticRig
+  const roleMap = roleBoneMap(sem)
+  const context = {
+    rig,
+    semantics: sem,
+    roleBone: (role: BoneRole) => roleMap.get(role),
+    restLocalQuat: (name: string): THREE.Quaternion => {
+      const index = rig.boneIndexByName.get(name)
+      return index === undefined ? new THREE.Quaternion() : rig.restLocal[index].quaternion.clone()
+    },
+    restWorldQuat: (name: string): THREE.Quaternion => {
+      const index = rig.boneIndexByName.get(name)
+      return index === undefined ? new THREE.Quaternion() : rig.restWorldQuat[index].clone()
+    },
+    lateralSign: (name: string): number => lateralSign(rig, name)
+  }
+  try {
+    const pose = generateAction(kind, context)
+    const clip = poseClipToAnimationClip(pose)
+    if (clip.tracks.length === 0) {
+      return { ok: false, message: '该模型的骨骼没有匹配到动作所需角色' }
+    }
+    playAnimationClip(clip)
+    return { ok: true, name: pose.name }
+  } catch (error) {
+    return { ok: false, message: `生成动作失败：${(error as Error).message}` }
   }
 }
 
@@ -409,6 +533,10 @@ function clearModel(): void {
   current = null
   partObjects.clear()
   boneObjects.clear()
+  boneByName.clear()
+  rigInfo = null
+  semanticRig = null
+  generatedClip = null
   selectionId = ''
   lastHighlight = null
 }
@@ -451,6 +579,7 @@ async function loadModel(bytes: Uint8Array | ArrayBuffer): Promise<void> {
       'parsed',
       buildStructure(gltf.animations, `${fmt(size.x)} × ${fmt(size.y)} × ${fmt(size.z)}`)
     )
+    analyzeSemantics(gltf.scene)
     emit('tick', { time: 0, duration: 0, playing: false, index: -1 })
   } catch (error) {
     const message = (error as Error)?.message || '模型解析失败'
@@ -808,6 +937,7 @@ defineExpose({
   selectNode,
   highlightParts,
   exportParts,
+  generateActionClip,
   focusNode,
   playClip,
   pauseClip,

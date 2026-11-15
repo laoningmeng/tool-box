@@ -34,3 +34,16 @@ export interface ViewerStructure {
   clips: ViewerClip[]
   stats: { triangles: number; meshes: number; size: string; skinned: boolean }
 }
+
+/** 骨骼语义识别结果（来自 rig 引擎，界面只要摘要） */
+export interface SemanticSummary {
+  available: boolean
+  boneCount: number
+  /** 识别出的角色数量 */
+  roleCount: number
+  /** 缺失的关键角色（中文名） */
+  missing: string[]
+  warnings: string[]
+  /** bone uuid -> 角色中文名 */
+  roles: Record<string, string>
+}

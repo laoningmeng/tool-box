@@ -42,7 +42,9 @@ function createWindow(): void {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // 实验台要一直跑 3D 动画，窗口失焦时不被 Chromium 降频
+      backgroundThrottling: false
     }
   })
 

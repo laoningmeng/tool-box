@@ -24,7 +24,9 @@ import { MODEL_SOURCE_META } from '@shared/constants'
 import { useModelStore } from '@renderer/stores/models'
 import { formatBytes, formatDateTime } from '@renderer/utils/format'
 import ModelViewer from '@renderer/components/ModelViewer.vue'
-import type { ViewerStructure } from '@renderer/components/model-viewer-types'
+import type { SemanticSummary, ViewerStructure } from '@renderer/components/model-viewer-types'
+import { ACTION_LIBRARY } from '@renderer/rig/actions'
+import type { ActionKind } from '@renderer/rig/types'
 
 /**
  * 实验台（游戏 3D 角色调整）。
@@ -50,7 +52,25 @@ const errorText = ref('')
 const viewer = ref<InstanceType<typeof ModelViewer> | null>(null)
 
 const structure = ref<ViewerStructure | null>(null)
+const semantics = ref<SemanticSummary | null>(null)
 const stats = computed(() => structure.value?.stats ?? null)
+
+/** 动作库：同一个 kind 在库里可能出现多次，按 kind 去重展示 */
+const libraryDefs = computed(() => {
+  const seen = new Set<string>()
+  return ACTION_LIBRARY.filter((item) => {
+    if (seen.has(item.kind)) return false
+    seen.add(item.kind)
+    return true
+  })
+})
+const libraryKind = ref<ActionKind | ''>('')
+
+/** 角色标签形如「左大腿 Thigh.L」，列表里只留中文部分 */
+function shortRole(label: string): string {
+  const match = /^[\u4e00-\u9fa5·]+/.exec(label)
+  return match ? match[0] : label
+}
 
 const tab = ref<Tab>('parts')
 const search = ref('')
@@ -113,7 +133,7 @@ const PART_TYPE_LABEL: Record<string, string> = {
   points: '点云'
 }
 const clips = computed(() => structure.value?.clips ?? [])
-const hasClips = computed(() => clips.value.length > 0)
+const hasPlayable = computed(() => clips.value.length > 0 || Boolean(libraryKind.value))
 
 function match(name: string): boolean {
   const keyword = search.value.trim().toLowerCase()
@@ -161,6 +181,22 @@ function handleParsed(next: ViewerStructure): void {
     clipIndex.value = 0
     playClip(0)
   }
+}
+
+function handleSemantics(summary: SemanticSummary): void {
+  semantics.value = summary
+}
+
+/** 用内置动作库现场生成一段动作（模型自带 0 段动画时也能看） */
+function playLibrary(kind: ActionKind): void {
+  const result = viewer.value?.generateActionClip(kind)
+  if (!result?.ok) {
+    ElMessage.warning(result?.message ?? '生成动作失败')
+    return
+  }
+  libraryKind.value = kind
+  clipIndex.value = -1
+  ElMessage.success(`已生成动作：${result.name ?? kind}`)
 }
 
 function handleTick(state: { time: number; duration: number; playing: boolean; index: number }): void {
@@ -335,6 +371,7 @@ async function removeGroup(group: ModelPartGroup): Promise<void> {
 
 function playClip(index: number): void {
   if (!viewer.value) return
+  libraryKind.value = ''
   clipIndex.value = index
   viewer.value.playClip(index)
   viewer.value.setClipSpeed(speed.value)
@@ -342,8 +379,8 @@ function playClip(index: number): void {
 }
 
 function togglePlay(): void {
-  if (!hasClips.value) return
-  if (clipIndex.value < 0) {
+  if (!hasPlayable.value) return
+  if (clipIndex.value < 0 && !libraryKind.value) {
     playClip(0)
     return
   }
@@ -357,7 +394,7 @@ function togglePlay(): void {
 }
 
 function restartClip(): void {
-  if (!hasClips.value) return
+  if (!hasPlayable.value) return
   viewer.value?.seekClip(0)
   clipTime.value = 0
 }
@@ -498,7 +535,10 @@ async function reveal(): Promise<void> {
             >
               <el-icon class="tree-row__icon"><Share /></el-icon>
               <span class="tree-row__name" :title="bone.name">{{ bone.name }}</span>
-              <span v-if="bone.childCount" class="tree-row__meta num">{{ bone.childCount }}</span>
+              <span v-if="semantics?.roles[bone.id]" class="tree-row__role">
+                {{ shortRole(semantics.roles[bone.id]) }}
+              </span>
+              <span v-else-if="bone.childCount" class="tree-row__meta num">{{ bone.childCount }}</span>
             </div>
             <p v-if="bones.length === 0" class="tree-empty">
               {{ structure?.bones.length ? '没有匹配的骨骼' : '该模型没有骨骼（静态模型）' }}
@@ -507,8 +547,12 @@ async function reveal(): Promise<void> {
         </div>
 
         <footer class="panel-foot">
-          <span v-if="tab === 'parts'">显示 {{ visibleCount }} / {{ structure?.parts.length ?? 0 }}</span>
-          <span v-else>共 {{ structure?.bones.length ?? 0 }} 根骨骼</span>
+          <span v-if="tab === 'parts'" class="panel-foot__text">
+            显示 {{ visibleCount }} / {{ structure?.parts.length ?? 0 }}
+          </span>
+          <span v-else class="panel-foot__text">
+            {{ structure?.bones.length ?? 0 }} 骨骼<template v-if="semantics?.available"> · 语义 {{ semantics.roleCount }}</template>
+          </span>
           <span class="panel-foot__hint">单击高亮 · 双击聚焦</span>
         </footer>
       </aside>
@@ -602,6 +646,7 @@ async function reveal(): Promise<void> {
             :highlight-color="highlight.color"
             :highlight-intensity="highlight.intensity"
             @parsed="handleParsed"
+            @semantics="handleSemantics"
             @tick="handleTick"
             @error="errorText = $event"
           />
@@ -610,26 +655,26 @@ async function reveal(): Promise<void> {
           </div>
         </div>
 
-        <div class="transport" :class="{ 'is-disabled': !hasClips }">
+        <div class="transport" :class="{ 'is-disabled': !hasPlayable }">
           <el-button
             circle
             size="small"
             :icon="playing ? VideoPause : VideoPlay"
-            :disabled="!hasClips"
+            :disabled="!hasPlayable"
             @click="togglePlay"
           />
-          <el-button circle size="small" :icon="RefreshLeft" :disabled="!hasClips" @click="restartClip" />
+          <el-button circle size="small" :icon="RefreshLeft" :disabled="!hasPlayable" @click="restartClip" />
           <el-slider
             :model-value="clipTime"
             :max="clipDuration || 1"
             :step="0.01"
             :show-tooltip="false"
-            :disabled="!hasClips"
+            :disabled="!hasPlayable"
             class="transport__slider"
             @input="handleSeek"
           />
           <span class="transport__time num">{{ fmtTime(clipTime) }} / {{ fmtTime(clipDuration) }}</span>
-          <el-select v-model="speed" size="small" class="transport__speed" :disabled="!hasClips" @change="handleSpeed">
+          <el-select v-model="speed" size="small" class="transport__speed" :disabled="!hasPlayable" @change="handleSpeed">
             <el-option :value="0.25" label="0.25×" />
             <el-option :value="0.5" label="0.5×" />
             <el-option :value="1" label="1×" />
@@ -649,7 +694,7 @@ async function reveal(): Promise<void> {
               :key="clip.index"
               type="button"
               class="clip"
-              :class="{ 'is-active': clipIndex === clip.index }"
+              :class="{ 'is-active': !libraryKind && clipIndex === clip.index }"
               @click="playClip(clip.index)"
             >
               <el-icon class="clip__icon"><VideoPlay /></el-icon>
@@ -658,6 +703,38 @@ async function reveal(): Promise<void> {
             </button>
           </div>
           <p v-else class="block__empty">该模型没有内置动作</p>
+        </section>
+
+        <section class="block">
+          <h3 class="block__title">
+            动作库 <span class="block__count">{{ libraryDefs.length }}</span>
+          </h3>
+          <p v-if="semantics && !semantics.available" class="block__hint">
+            {{ semantics.warnings[0] || '该模型没有可用骨骼，动作库不可用' }}
+          </p>
+          <p v-else-if="!semantics" class="block__hint">正在识别骨骼语义…</p>
+          <template v-else>
+            <p class="block__hint">
+              按骨骼语义现场生成，不需要模型自带动作
+              <template v-if="semantics.missing.length">
+                · 缺：{{ semantics.missing.slice(0, 4).map(shortRole).join('、') }}<template v-if="semantics.missing.length > 4">…</template>
+              </template>
+            </p>
+            <div class="library-grid">
+              <button
+                v-for="def in libraryDefs"
+                :key="def.kind"
+                type="button"
+                class="clip clip--lib"
+                :class="{ 'is-active': libraryKind === def.kind }"
+                :title="def.description"
+                @click="playLibrary(def.kind)"
+              >
+                <span class="clip__name">{{ def.label }}</span>
+                <span class="clip__time num">{{ def.defaultDuration }}s</span>
+              </button>
+            </div>
+          </template>
         </section>
 
         <section class="block">
@@ -740,6 +817,12 @@ async function reveal(): Promise<void> {
             <div class="info__row">
               <span>名称</span>
               <span class="mono info__name" :title="selectedBone.name">{{ selectedBone.name }}</span>
+            </div>
+            <div v-if="semantics?.roles[selectedBone.id]" class="info__row">
+              <span>角色</span>
+              <el-tag size="small" effect="light" type="success">
+                {{ shortRole(semantics.roles[selectedBone.id]) }}
+              </el-tag>
             </div>
             <div class="info__row">
               <span>层级</span>
@@ -924,6 +1007,31 @@ async function reveal(): Promise<void> {
   flex: none;
 }
 
+.tree-row__role {
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-softer);
+  color: var(--accent);
+  flex: none;
+  white-space: nowrap;
+}
+
+.library-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.clip--lib {
+  padding: 6px 8px;
+  background: var(--bg-subtle);
+}
+
+.clip--lib .clip__name {
+  font-size: 11.5px;
+}
+
 .tree-empty {
   margin: 20px 12px;
   font-size: 12px;
@@ -945,6 +1053,14 @@ async function reveal(): Promise<void> {
 
 .panel-foot__hint {
   opacity: 0.8;
+  white-space: nowrap;
+  flex: none;
+}
+
+.panel-foot__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- 中：视口 ---------- */
