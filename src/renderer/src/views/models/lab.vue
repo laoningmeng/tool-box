@@ -16,10 +16,12 @@ import {
   FullScreen,
   Grid,
   Hide,
+  Lock,
   RefreshLeft,
   RefreshRight,
   Search,
   Share,
+  Unlock,
   VideoPause,
   VideoPlay,
   View
@@ -147,9 +149,15 @@ const display = reactive({
   showGrid: true,
   wireframe: false,
   showSkeleton: true,
+  freezeMesh: localStorage.getItem('lab:freeze-mesh') === '1',
   background: '#0b1220',
   exposure: 1
 })
+
+watch(
+  () => display.freezeMesh,
+  (value) => localStorage.setItem('lab:freeze-mesh', value ? '1' : '0')
+)
 
 const hiddenParts = reactive(new Set<string>())
 const presetColors = ['#0b1220', '#141a24', '#1e293b', '#0f172a', '#f4f6fb', '#2b2140']
@@ -916,6 +924,19 @@ async function reveal(): Promise<void> {
               @click="display.showSkeleton = !display.showSkeleton"
             />
           </el-tooltip>
+          <el-tooltip
+            :content="display.freezeMesh ? '仅骨骼：模型形变已冻结，点此恢复' : '仅骨骼：冻结模型形变，只摆骨骼'"
+            placement="bottom"
+          >
+            <el-button
+              size="small"
+              :icon="display.freezeMesh ? Lock : Unlock"
+              :type="display.freezeMesh ? 'primary' : 'default'"
+              @click="display.freezeMesh = !display.freezeMesh"
+            >
+              仅骨骼
+            </el-button>
+          </el-tooltip>
           <span class="view-toolbar__sep" />
           <el-popover placement="bottom" :width="252" trigger="click">
             <template #reference>
@@ -962,6 +983,7 @@ async function reveal(): Promise<void> {
             :highlight-color="highlight.color"
             :highlight-intensity="highlight.intensity"
             :gizmo-mode="gizmoMode"
+            :freeze-mesh="display.freezeMesh"
             @parsed="handleParsed"
             @semantics="handleSemantics"
             @tick="handleTick"

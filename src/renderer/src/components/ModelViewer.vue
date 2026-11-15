@@ -48,6 +48,8 @@ const props = withDefaults(
     highlightIntensity?: number
     /** 骨骼编辑 gizmo：rotate / translate / off */
     gizmoMode?: 'rotate' | 'translate' | 'off'
+    /** 仅骨骼：冻结网格形变，摆骨骼时模型不动 */
+    freezeMesh?: boolean
   }>(),
   {
     format: 'glb',
@@ -59,7 +61,8 @@ const props = withDefaults(
     exposure: 1,
     highlightColor: '#ffb74d',
     highlightIntensity: 0.45,
-    gizmoMode: 'off'
+    gizmoMode: 'off',
+    freezeMesh: false
   }
 )
 
@@ -110,6 +113,8 @@ let boneOverlay: {
 let selectedBone: THREE.Bone | null = null
 /** 骨骼编辑 gizmo（TransformControls） */
 let gizmo: TransformControls | null = null
+/** 冻结网格时换上的「定格骨架」：原始 skeleton -> 冻结点 */
+const frozenSkeletons = new Map<THREE.SkinnedMesh, THREE.Skeleton>()
 /** 绑定姿态下的局部变换，用于「复位」 */
 const initialLocal = new Map<
   string,
@@ -1019,6 +1024,42 @@ function redo(): { ok: boolean; label?: string } {
   return { ok: true, label: snapshot.label }
 }
 
+/* ------------------------------- 仅骨骼模式 ------------------------------- */
+
+/**
+ * 冻结网格：把每块蒙皮网格的 skeleton 换成一份「定格骨架」——
+ * 假骨骼的 matrixWorld 固定为当前姿态，于是挪真骨骼时网格不再跟着形变。
+ * 松开时把原 skeleton 换回去。
+ */
+function applyFreezeMesh(freeze: boolean): void {
+  if (!current) return
+  if (!freeze) {
+    for (const [mesh, original] of frozenSkeletons) {
+      mesh.skeleton = original
+    }
+    frozenSkeletons.clear()
+    return
+  }
+  if (frozenSkeletons.size > 0) return
+  current.updateMatrixWorld(true)
+  for (const mesh of collectSkinnedMeshes(current)) {
+    const original = mesh.skeleton
+    if (!original) continue
+    const fakeBones: THREE.Bone[] = []
+    for (const bone of original.bones) {
+      const frozenBone = new THREE.Bone()
+      frozenBone.name = bone.name
+      frozenBone.matrixAutoUpdate = false
+      frozenBone.matrix.copy(bone.matrixWorld)
+      frozenBone.matrixWorld.copy(bone.matrixWorld)
+      fakeBones.push(frozenBone)
+    }
+    const frozen = new THREE.Skeleton(fakeBones, original.boneInverses)
+    frozenSkeletons.set(mesh, original)
+    mesh.skeleton = frozen
+  }
+}
+
 /* ------------------------------- 相机与网格 ------------------------------- */
 
 function frameObject(object: THREE.Object3D, padding = 1.35): void {
@@ -1262,6 +1303,7 @@ function disposeObject(object: THREE.Object3D): void {
 
 function clearModel(): void {
   if (!scene || !current) return
+  applyFreezeMesh(false)
   clearSelectionVisual()
   gizmo?.detach()
   if (gizmo) gizmo.getHelper().visible = false
@@ -1330,6 +1372,7 @@ async function loadModel(bytes: Uint8Array | ArrayBuffer): Promise<void> {
     analyzeSemantics(gltf.scene)
     // 必须等 buildStructure 解析完骨骼（填充 boneObjects）再建骨架叠加层
     rebuildSkeletonOverlay()
+    if (props.freezeMesh) applyFreezeMesh(true)
     emit('tick', { time: 0, duration: 0, playing: false, index: -1 })
   } catch (error) {
     const message = (error as Error)?.message || '模型解析失败'
@@ -1732,6 +1775,13 @@ watch(
       gizmo.attach(selectedBone)
       helper.visible = true
     }
+  }
+)
+
+watch(
+  () => props.freezeMesh,
+  (freeze) => {
+    applyFreezeMesh(freeze)
   }
 )
 
