@@ -149,6 +149,178 @@ function setAllSections(open: boolean): void {
   layoutVersion.value += 1
 }
 
+/* ------------------------------ 检查器面板（停靠 / 浮动） ------------------------------ */
+const inspectorTab = ref<'props' | 'actions' | 'groups'>('props')
+const inspectorVisible = ref(true)
+const inspectorFloating = ref(false)
+const floatPos = reactive({ x: 0, y: 0 })
+let panelDrag: { pointerId: number; startX: number; startY: number; originX: number; originY: number } | null = null
+
+function toggleFloating(): void {
+  if (!inspectorFloating.value) {
+    const lab = document.querySelector('.lab') as HTMLElement | null
+    const width = lab?.getBoundingClientRect().width ?? 900
+    floatPos.x = Math.max(12, width - 320)
+    floatPos.y = 12
+  }
+  inspectorFloating.value = !inspectorFloating.value
+}
+
+function startPanelDrag(event: PointerEvent): void {
+  if (!inspectorFloating.value) return
+  panelDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    originX: floatPos.x,
+    originY: floatPos.y
+  }
+  // 捕获指针，拖出面板头部也能继续跟手
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
+}
+
+function onPanelDrag(event: PointerEvent): void {
+  if (!panelDrag || event.pointerId !== panelDrag.pointerId) return
+  floatPos.x = Math.max(0, panelDrag.originX + (event.clientX - panelDrag.startX))
+  floatPos.y = Math.max(0, panelDrag.originY + (event.clientY - panelDrag.startY))
+}
+
+function endPanelDrag(event: PointerEvent): void {
+  if (!panelDrag) return
+  ;(event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId)
+  panelDrag = null
+}
+
+function showShortcuts(): void {
+  void ElMessageBox.alert(
+    '<div style="line-height:2;font-size:12.5px">' +
+      '<b>通用</b>　Ctrl+Z 撤销 · Ctrl+Y 恢复<br/>' +
+      '<b>精修</b>　← → 逐帧 · K 记关键帧 · 空格 播放/暂停<br/>' +
+      '<b>骨骼编辑</b>　选中骨骼后拖动手柄（旋转/移动），或在右栏输数值<br/>' +
+      '<b>视图</b>　「全屏」进入专注模式 ·「仅骨骼」冻结网格形变' +
+      '</div>',
+    '快捷键一览',
+    { dangerouslyUseHTMLString: true, confirmButtonText: '知道了' }
+  )
+}
+
+/** 菜单栏统一分发 */
+function handleMenuCommand(command: string): void {
+  switch (command) {
+    case 'locate':
+      void reveal()
+      break
+    case 'screenshot':
+      saveScreenshot()
+      break
+    case 'back':
+      void router.push('/models')
+      break
+    case 'undo':
+      undoEdit()
+      break
+    case 'redo':
+      redoEdit()
+      break
+    case 'reset-bone':
+      resetSelectedBone()
+      break
+    case 'reset-pose':
+      resetAllPose()
+      break
+    case 'save-action':
+      void saveEdit()
+      break
+    case 'cancel-edit':
+      void cancelEdit()
+      break
+    case 'fullscreen':
+      void appStore.toggleFocusMode()
+      break
+    case 'freeze-mesh':
+      display.freezeMesh = !display.freezeMesh
+      break
+    case 'wireframe':
+      display.wireframe = !display.wireframe
+      break
+    case 'grid':
+      display.showGrid = !display.showGrid
+      break
+    case 'skeleton':
+      display.showSkeleton = !display.showSkeleton
+      break
+    case 'autorotate':
+      display.autoRotate = !display.autoRotate
+      break
+    case 'reset-view':
+      viewer.value?.resetView()
+      break
+    case 'play':
+      togglePlay()
+      break
+    case 'frame-prev':
+      stepFrame(-1)
+      break
+    case 'frame-next':
+      stepFrame(1)
+      break
+    case 'record-key':
+      recordKey()
+      break
+    case 'record-all':
+      recordAll()
+      break
+    case 'delete-key':
+      removeKey()
+      break
+    case 'edit-clip':
+      if (editing.value) {
+        ElMessage.info('已经在精修模式里了')
+      } else if (libraryKind.value) {
+        startEditLibrary()
+      } else if (clipIndex.value >= 0) {
+        startEditNative(clipIndex.value)
+      } else {
+        ElMessage.warning('先选一段动作（自带片段 / 动作库 / 已绑定动作）')
+      }
+      break
+    case 'panel-props':
+      inspectorTab.value = 'props'
+      inspectorVisible.value = true
+      break
+    case 'panel-actions':
+      inspectorTab.value = 'actions'
+      inspectorVisible.value = true
+      break
+    case 'panel-groups':
+      inspectorTab.value = 'groups'
+      inspectorVisible.value = true
+      break
+    case 'panel-toggle':
+      inspectorVisible.value = !inspectorVisible.value
+      break
+    case 'float':
+      toggleFloating()
+      break
+    case 'expand-all':
+      setAllSections(true)
+      break
+    case 'collapse-all':
+      setAllSections(false)
+      break
+    case 'shortcuts':
+      showShortcuts()
+      break
+    case 'about':
+      void ElMessageBox.alert(
+        '穷哥们的工具箱 · 实验台\n本地优先：模型不上传、不联网，动作数据存在 .userdata/database.json',
+        '关于',
+        { confirmButtonText: '知道了' }
+      )
+      break
+  }
+}
+
 /** 关键帧条上的百分比位置 */
 function keyPercent(time: number): string {
   const duration = Math.max(editState.value?.duration ?? 1, 0.001)
@@ -820,7 +992,117 @@ async function reveal(): Promise<void> {
 
     <el-alert v-if="errorText" :title="errorText" type="error" :closable="false" show-icon />
 
-    <div class="lab">
+    <nav class="menubar">
+      <el-dropdown trigger="click" @command="handleMenuCommand">
+        <button class="menubar__item" type="button">文件</button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="locate" :disabled="!model">定位文件</el-dropdown-item>
+            <el-dropdown-item command="screenshot" :disabled="!model" divided>截图</el-dropdown-item>
+            <el-dropdown-item command="back" divided>返回列表</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+
+      <el-dropdown trigger="click" @command="handleMenuCommand">
+        <button class="menubar__item" type="button">编辑</button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="undo" :disabled="historyState.undo === 0">
+              撤销<span class="menu-hint">Ctrl+Z</span>
+            </el-dropdown-item>
+            <el-dropdown-item command="redo" :disabled="historyState.redo === 0">
+              恢复<span class="menu-hint">Ctrl+Y</span>
+            </el-dropdown-item>
+            <el-dropdown-item command="reset-bone" :disabled="!selectedBoneId" divided>复位该骨骼</el-dropdown-item>
+            <el-dropdown-item command="reset-pose" :disabled="!structure?.bones.length">复位全部姿态</el-dropdown-item>
+            <el-dropdown-item command="save-action" :disabled="!editing" divided>保存并绑定动作</el-dropdown-item>
+            <el-dropdown-item command="cancel-edit" :disabled="!editing">放弃精修</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+
+      <el-dropdown trigger="click" @command="handleMenuCommand">
+        <button class="menubar__item" type="button">视图</button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="fullscreen">
+              {{ appStore.immersive ? '退出全屏' : '全屏（专注模式）' }}
+            </el-dropdown-item>
+            <el-dropdown-item command="reset-view">重置视角</el-dropdown-item>
+            <el-dropdown-item command="freeze-mesh" divided>
+              仅骨骼<span class="menu-hint">{{ display.freezeMesh ? '✓' : '' }}</span>
+            </el-dropdown-item>
+            <el-dropdown-item command="wireframe">
+              线框<span class="menu-hint">{{ display.wireframe ? '✓' : '' }}</span>
+            </el-dropdown-item>
+            <el-dropdown-item command="grid">
+              网格<span class="menu-hint">{{ display.showGrid ? '✓' : '' }}</span>
+            </el-dropdown-item>
+            <el-dropdown-item command="skeleton">
+              骨架<span class="menu-hint">{{ display.showSkeleton ? '✓' : '' }}</span>
+            </el-dropdown-item>
+            <el-dropdown-item command="autorotate">
+              自动旋转<span class="menu-hint">{{ display.autoRotate ? '✓' : '' }}</span>
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+
+      <el-dropdown trigger="click" @command="handleMenuCommand">
+        <button class="menubar__item" type="button">动作</button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="play" :disabled="!hasPlayable">
+              {{ playing ? '暂停' : '播放' }}<span class="menu-hint">空格</span>
+            </el-dropdown-item>
+            <el-dropdown-item command="edit-clip" :disabled="editing">进入精修</el-dropdown-item>
+            <el-dropdown-item command="record-key" :disabled="!editing" divided>
+              记关键帧<span class="menu-hint">K</span>
+            </el-dropdown-item>
+            <el-dropdown-item command="record-all" :disabled="!editing">记整帧</el-dropdown-item>
+            <el-dropdown-item command="delete-key" :disabled="!editing">删关键帧</el-dropdown-item>
+            <el-dropdown-item command="frame-prev" :disabled="!editing" divided>
+              上一帧<span class="menu-hint">←</span>
+            </el-dropdown-item>
+            <el-dropdown-item command="frame-next" :disabled="!editing">
+              下一帧<span class="menu-hint">→</span>
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+
+      <el-dropdown trigger="click" @command="handleMenuCommand">
+        <button class="menubar__item" type="button">窗口</button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="panel-props">属性面板</el-dropdown-item>
+            <el-dropdown-item command="panel-actions">动作面板</el-dropdown-item>
+            <el-dropdown-item command="panel-groups">分组面板</el-dropdown-item>
+            <el-dropdown-item command="panel-toggle" divided>
+              {{ inspectorVisible ? '隐藏检查器' : '显示检查器' }}
+            </el-dropdown-item>
+            <el-dropdown-item command="float">
+              {{ inspectorFloating ? '停靠检查器' : '浮动检查器' }}
+            </el-dropdown-item>
+            <el-dropdown-item command="expand-all" divided>展开全部分区</el-dropdown-item>
+            <el-dropdown-item command="collapse-all">收起全部分区</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+
+      <el-dropdown trigger="click" @command="handleMenuCommand">
+        <button class="menubar__item" type="button">帮助</button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="shortcuts">快捷键一览</el-dropdown-item>
+            <el-dropdown-item command="about">关于</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </nav>
+
+    <div class="lab" :class="{ 'no-inspector': !inspectorVisible || inspectorFloating }">
       <!-- 左：结构 -->
       <aside class="lab__panel lab__structure">
         <div class="panel-tabs">
@@ -1070,18 +1352,65 @@ async function reveal(): Promise<void> {
         </div>
       </section>
 
-      <!-- 右：动作 + 信息 -->
-      <aside class="lab__panel lab__inspector">
-        <div class="inspector-tools">
-          <span class="inspector-tools__hint">检查器</span>
-          <el-tooltip content="展开全部" placement="bottom">
-            <el-button size="small" :icon="Expand" @click="setAllSections(true)" />
-          </el-tooltip>
-          <el-tooltip content="收起全部" placement="bottom">
-            <el-button size="small" :icon="Fold" @click="setAllSections(false)" />
-          </el-tooltip>
+      <!-- 右：检查器（属性 / 动作 / 分组 三页，可浮动） -->
+      <aside
+        v-show="inspectorVisible"
+        class="lab__panel lab__inspector"
+        :class="{ 'is-floating': inspectorFloating }"
+        :style="inspectorFloating ? { left: floatPos.x + 'px', top: floatPos.y + 'px' } : undefined"
+      >
+        <div
+          class="inspector-head"
+          @pointerdown="startPanelDrag"
+          @pointermove="onPanelDrag"
+          @pointerup="endPanelDrag"
+          @pointercancel="endPanelDrag"
+          @dblclick="inspectorFloating = false"
+        >
+          <span class="inspector-head__title">检查器</span>
+          <span class="inspector-head__actions">
+            <el-tooltip content="展开全部分区" placement="bottom">
+              <el-button size="small" :icon="Expand" @click="setAllSections(true)" />
+            </el-tooltip>
+            <el-tooltip content="收起全部分区" placement="bottom">
+              <el-button size="small" :icon="Fold" @click="setAllSections(false)" />
+            </el-tooltip>
+            <el-tooltip :content="inspectorFloating ? '停靠到右侧' : '浮动为可拖动面板'" placement="bottom">
+              <el-button size="small" @click="toggleFloating">
+                {{ inspectorFloating ? '停靠' : '浮动' }}
+              </el-button>
+            </el-tooltip>
+          </span>
         </div>
 
+        <div class="inspector-tabs">
+          <button
+            type="button"
+            class="inspector-tab"
+            :class="{ 'is-active': inspectorTab === 'props' }"
+            @click="inspectorTab = 'props'"
+          >
+            属性
+          </button>
+          <button
+            type="button"
+            class="inspector-tab"
+            :class="{ 'is-active': inspectorTab === 'actions' }"
+            @click="inspectorTab = 'actions'"
+          >
+            动作
+          </button>
+          <button
+            type="button"
+            class="inspector-tab"
+            :class="{ 'is-active': inspectorTab === 'groups' }"
+            @click="inspectorTab = 'groups'"
+          >
+            分组
+          </button>
+        </div>
+
+        <div v-show="inspectorTab === 'props'" class="inspector-body">
         <PanelSection
           title="选中"
           storage-key="inspect"
@@ -1259,7 +1588,9 @@ async function reveal(): Promise<void> {
           </div>
           <p class="block__hint">每次点击 ±12°，可反复点击叠加；Ctrl+Z 可撤销</p>
         </PanelSection>
+        </div>
 
+        <div v-show="inspectorTab === 'actions'" class="inspector-body">
         <PanelSection
           v-if="editing"
           tone="accent"
@@ -1421,7 +1752,9 @@ async function reveal(): Promise<void> {
             </div>
           </template>
         </PanelSection>
+        </div>
 
+        <div v-show="inspectorTab === 'groups'" class="inspector-body">
         <PanelSection
           v-if="tab === 'parts' || groups.length > 0"
           title="分组"
@@ -1472,6 +1805,7 @@ async function reveal(): Promise<void> {
           </div>
           <p v-else class="block__empty">在左侧选中部件后可保存为分组</p>
         </PanelSection>
+        </div>
 
         <p class="lab__path mono" :title="model?.path">{{ model?.path }}</p>
       </aside>
@@ -1767,13 +2101,16 @@ async function reveal(): Promise<void> {
 .view-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+  row-gap: 6px;
   padding: 6px 10px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
   background: var(--bg-surface);
   box-shadow: var(--shadow-sm);
   flex: none;
+  min-width: 0;
 }
 
 .view-toolbar__sep {
@@ -1789,7 +2126,7 @@ async function reveal(): Promise<void> {
 }
 
 .view-toolbar__slider {
-  width: 90px;
+  width: 80px;
 }
 
 .hl {
@@ -1884,31 +2221,141 @@ async function reveal(): Promise<void> {
 
 /* ---------- 右：检查器 ---------- */
 .lab__inspector {
-  padding: 10px;
-  gap: 8px;
-  overflow-y: auto;
+  padding: 8px;
+  gap: 6px;
+  overflow: hidden;
 }
 
-.inspector-tools {
+/* 菜单栏 */
+.menubar {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   flex: none;
-  padding: 0 2px;
+  padding: 3px 6px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
 }
 
-.inspector-tools__hint {
+.menubar__item {
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background var(--dur-fast) linear, color var(--dur-fast) linear;
+}
+
+.menubar__item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.menu-hint {
+  float: right;
+  margin-left: 28px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+/* 检查器：头部 + 页签 + 面板体 */
+.inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 0 2px;
+  user-select: none;
+}
+
+.lab__inspector.is-floating .inspector-head {
+  cursor: move;
+}
+
+.inspector-head__title {
   flex: 1;
   font-size: 11px;
   color: var(--text-tertiary);
   letter-spacing: 0.06em;
 }
 
-.inspector-tools :deep(.el-button) {
-  width: 24px;
+.inspector-head__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inspector-head__actions :deep(.el-button) {
+  width: auto;
+  min-width: 24px;
   height: 22px;
-  padding: 0;
+  padding: 0 6px;
   margin-left: 0;
+  font-size: 11.5px;
+}
+
+.inspector-tabs {
+  display: flex;
+  gap: 2px;
+  flex: none;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.inspector-tab {
+  flex: 1;
+  padding: 4px 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--dur-fast) linear, color var(--dur-fast) linear;
+}
+
+.inspector-tab:hover {
+  color: var(--text-secondary);
+}
+
+.inspector-tab.is-active {
+  background: var(--bg-surface);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.inspector-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* 浮动模式：脱离网格独立悬浮，可拖动 */
+.lab {
+  position: relative;
+}
+
+.lab__inspector.is-floating {
+  position: absolute;
+  z-index: 30;
+  width: 304px;
+  max-height: calc(100% - 24px);
+  box-shadow: var(--shadow-lg);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-color));
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.lab.no-inspector {
+  grid-template-columns: 248px minmax(0, 1fr);
 }
 
 .block {
