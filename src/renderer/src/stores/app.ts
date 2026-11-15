@@ -54,7 +54,6 @@ export const useAppStore = defineStore('app', () => {
   })
 
   const systemName = computed(() => settings.value.systemName || '穷哥们的工具箱')
-  const tagline = computed(() => 'TOOLBOX STUDIO')
   const initial = computed(() => systemName.value.slice(0, 1))
 
   function applyTheme(): void {
@@ -132,7 +131,6 @@ export const useAppStore = defineStore('app', () => {
     ready,
     isDark,
     systemName,
-    tagline,
     initial,
     load,
     loadSystemInfo,

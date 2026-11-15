@@ -16,7 +16,6 @@ const online = computed(() => appStore.ready)
       <transition name="brand">
         <div v-if="!collapsed" class="titlebar__titles">
           <strong>{{ appStore.systemName }}</strong>
-          <span>{{ appStore.tagline }}</span>
         </div>
       </transition>
     </div>
@@ -99,13 +98,6 @@ html[data-platform='win32'] .titlebar {
   font-size: 13.5px;
   font-weight: 600;
   letter-spacing: 0.01em;
-}
-
-.titlebar__titles span {
-  font-size: 10.5px;
-  color: var(--titlebar-muted);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .titlebar__drag {
