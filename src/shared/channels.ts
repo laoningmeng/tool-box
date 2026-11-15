@@ -44,6 +44,8 @@ export const IPC = {
     read: 'model:read',
     saveGroup: 'model:save-group',
     removeGroup: 'model:remove-group',
+    saveAction: 'model:save-action',
+    removeAction: 'model:remove-action',
     exportGroup: 'model:export-group'
   },
   modelConfig: {

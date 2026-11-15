@@ -273,10 +273,48 @@ export interface ModelAsset {
   tags: string[]
   /** 在实验台里保存的部件分组 */
   groups?: ModelPartGroup[]
+  /** 绑定到模型的动作（动作库生成 / 精修后保存） */
+  actions?: ModelAction[]
   createdAt: string
   updatedAt: string
   /** 查询时实时计算（文件是否还在），不落库 */
   exists?: boolean
+}
+
+/** 一条骨骼轨道：times 严格递增，quats 是展平的局部四元数 (x,y,z,w) */
+export interface ModelActionTrack {
+  bone: string
+  times: number[]
+  quats: number[]
+}
+
+export type ModelActionOrigin = 'native' | 'library' | 'custom'
+
+/** 绑定在模型上的动作片段 */
+export interface ModelAction {
+  id: string
+  name: string
+  duration: number
+  loop: boolean
+  fps: number
+  origin: ModelActionOrigin
+  /** origin=library 时记录动作库 kind */
+  sourceKind?: string
+  tracks: ModelActionTrack[]
+  /** 是否经过手动精修 */
+  edited: boolean
+  createdAt: string
+}
+
+export interface ModelActionInput {
+  name: string
+  duration: number
+  loop: boolean
+  fps?: number
+  origin?: ModelActionOrigin
+  sourceKind?: string
+  tracks: ModelActionTrack[]
+  edited?: boolean
 }
 
 export interface ModelInput {
@@ -370,6 +408,9 @@ export interface ModelApi {
   /** 保存部件分组 */
   saveGroup(modelId: string, name: string, partKeys: string[]): Promise<ModelPartGroup>
   removeGroup(modelId: string, groupId: string): Promise<{ ok: boolean }>
+  /** 保存一帧精修后的动作，绑定到模型 */
+  saveAction(modelId: string, input: ModelActionInput): Promise<ModelAction>
+  removeAction(modelId: string, actionId: string): Promise<{ ok: boolean }>
   /**
    * 导出一组部件为 glb 文件，并自动登记进模型库。
    * 不传 targetPath 时弹保存对话框（自动化测试可直接给路径）。

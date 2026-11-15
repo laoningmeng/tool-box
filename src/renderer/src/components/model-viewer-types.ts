@@ -47,3 +47,18 @@ export interface SemanticSummary {
   /** bone uuid -> 角色中文名 */
   roles: Record<string, string>
 }
+
+/** 精修会话状态（viewer -> 界面） */
+export interface ClipEditState {
+  editing: boolean
+  name: string
+  duration: number
+  fps: number
+  time: number
+  playing: boolean
+  /** 所有轨道的总关键帧数 */
+  keyCount: number
+  /** 当前选中骨骼的关键帧时间点 */
+  boneKeys: number[]
+  dirty: boolean
+}

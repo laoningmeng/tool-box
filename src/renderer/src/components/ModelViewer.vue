@@ -12,12 +12,14 @@ import { generateAction } from '../rig/actions'
 import { ROLE_LABELS } from '../rig/types'
 import type { ActionKind, BoneRole, PoseClip, RigInfo, SemanticRig } from '../rig/types'
 import type {
+  ClipEditState,
   SemanticSummary,
   ViewerBone,
   ViewerClip,
   ViewerPart,
   ViewerStructure
 } from './model-viewer-types'
+import type { ModelAction, ModelActionInput, ModelActionTrack } from '@shared/types'
 
 /**
  * 3D 预览 / 实验台画布（three.js）。
@@ -73,6 +75,8 @@ const emit = defineEmits<{
       rotation: { x: number; y: number; z: number }
     }
   ]
+  /** 精修会话状态变化 */
+  'edit-state': [state: ClipEditState]
   error: [message: string]
 }>()
 
@@ -381,23 +385,24 @@ function poseClipToAnimationClip(pose: PoseClip): THREE.AnimationClip {
   return new THREE.AnimationClip(pose.name || 'action', pose.duration || 1, tracks)
 }
 
-function playAnimationClip(clip: THREE.AnimationClip): void {
+function playAnimationClip(clip: THREE.AnimationClip, loop = true): void {
   if (!mixer) return
   if (generatedClip && generatedClip !== clip) mixer.uncacheClip(generatedClip)
   mixer.stopAllAction()
   generatedClip = clip
   const action = mixer.clipAction(clip)
   action.reset()
-  action.setLoop(THREE.LoopRepeat, Infinity)
+  action.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity)
+  action.clampWhenFinished = !loop
   action.timeScale = 1
   action.play()
   activeAction = action
   emit('tick', { time: 0, duration: clip.duration, playing: true, index: -1 })
 }
 
-/** 用内置动作库现场生成一个动作并播放（不需要模型自带动画） */
-function generateActionClip(kind: ActionKind): { ok: boolean; name?: string; message?: string } {
-  if (!rigInfo || !semanticRig) return { ok: false, message: '该模型没有可用骨骼，动作库不可用' }
+/** 组装动作库上下文（语义识别结果 -> 生成动作需要的东西） */
+function buildPoseClip(kind: ActionKind): PoseClip | null {
+  if (!rigInfo || !semanticRig) return null
   const rig = rigInfo
   const sem = semanticRig
   const roleMap = roleBoneMap(sem)
@@ -415,13 +420,20 @@ function generateActionClip(kind: ActionKind): { ok: boolean; name?: string; mes
     },
     lateralSign: (name: string): number => lateralSign(rig, name)
   }
+  return generateAction(kind, context)
+}
+
+/** 用内置动作库现场生成一个动作并播放（不需要模型自带动画） */
+function generateActionClip(kind: ActionKind): { ok: boolean; name?: string; message?: string } {
+  if (!rigInfo || !semanticRig) return { ok: false, message: '该模型没有可用骨骼，动作库不可用' }
   try {
-    const pose = generateAction(kind, context)
+    const pose = buildPoseClip(kind)
+    if (!pose) return { ok: false, message: '该模型没有可用骨骼，动作库不可用' }
     const clip = poseClipToAnimationClip(pose)
     if (clip.tracks.length === 0) {
       return { ok: false, message: '该模型的骨骼没有匹配到动作所需角色' }
     }
-    playAnimationClip(clip)
+    playAnimationClip(clip, pose.loop)
     return { ok: true, name: pose.name }
   } catch (error) {
     return { ok: false, message: `生成动作失败：${(error as Error).message}` }
@@ -539,6 +551,353 @@ function resetPose(): void {
   if (current) current.updateMatrixWorld(true)
   emitBoneTransform()
   if (boneOverlay) updateSkeletonOverlay()
+}
+
+/* ------------------------------- 动作精修 ------------------------------- */
+
+interface EditTrack {
+  times: number[]
+  quats: THREE.Quaternion[]
+}
+
+interface EditSession {
+  name: string
+  duration: number
+  loop: boolean
+  fps: number
+  origin: 'native' | 'library' | 'custom'
+  sourceKind?: string
+  tracks: Map<string, EditTrack>
+  dirty: boolean
+}
+
+let editSession: EditSession | null = null
+let editTime = 0
+let editPlaying = false
+
+function tracksFromPoseClip(pose: PoseClip): Map<string, EditTrack> {
+  const result = new Map<string, EditTrack>()
+  for (const track of pose.tracks) {
+    if (track.times.length === 0) continue
+    result.set(track.bone, {
+      times: [...track.times],
+      quats: track.quats.map((quat) => quat.clone())
+    })
+  }
+  return result
+}
+
+function tracksFromSaved(tracks: ModelActionTrack[]): Map<string, EditTrack> {
+  const result = new Map<string, EditTrack>()
+  for (const track of tracks) {
+    if (!track.bone || track.times.length === 0) continue
+    const quats: THREE.Quaternion[] = []
+    for (let index = 0; index + 3 < track.quats.length; index += 4) {
+      quats.push(new THREE.Quaternion(track.quats[index], track.quats[index + 1], track.quats[index + 2], track.quats[index + 3]))
+    }
+    if (quats.length !== track.times.length) continue
+    result.set(track.bone, { times: [...track.times], quats })
+  }
+  return result
+}
+
+/** 把模型自带动画按 30fps 采样成每条骨骼一组关键帧 */
+function sampleNativeClip(clip: THREE.AnimationClip): Map<string, EditTrack> {
+  const result = new Map<string, EditTrack>()
+  if (!mixer) return result
+  const bones = [...boneObjects.values()]
+  const fps = 30
+  const frames = Math.max(2, Math.round(clip.duration * fps) + 1)
+  const times: number[] = []
+  const samples: THREE.Quaternion[][] = bones.map(() => [])
+  const action = mixer.clipAction(clip)
+  action.reset()
+  action.play()
+  for (let index = 0; index < frames; index += 1) {
+    const time = Math.min(clip.duration, index / fps)
+    mixer.setTime(time)
+    times.push(Number(time.toFixed(4)))
+    bones.forEach((bone, boneIndex) => samples[boneIndex].push(bone.quaternion.clone()))
+  }
+  action.stop()
+  mixer.stopAllAction()
+  bones.forEach((bone, boneIndex) => {
+    if (bone.name) result.set(bone.name, { times: [...times], quats: samples[boneIndex] })
+  })
+  return result
+}
+
+function sampleTrackAt(track: EditTrack, time: number): THREE.Quaternion {
+  const { times, quats } = track
+  if (times.length === 0) return new THREE.Quaternion()
+  if (time <= times[0]) return quats[0].clone()
+  const last = times.length - 1
+  if (time >= times[last]) return quats[last].clone()
+  let low = 0
+  let high = last
+  while (high - low > 1) {
+    const mid = (low + high) >> 1
+    if (times[mid] <= time) low = mid
+    else high = mid
+  }
+  const span = times[high] - times[low]
+  const alpha = span > 1e-6 ? (time - times[low]) / span : 0
+  return quats[low].clone().slerp(quats[high], alpha)
+}
+
+function sampleEditTracks(time: number): void {
+  if (!editSession) return
+  for (const [boneName, track] of editSession.tracks) {
+    const bone = boneByName.get(boneName)
+    if (!bone) continue
+    bone.quaternion.copy(sampleTrackAt(track, time))
+  }
+  if (current) current.updateMatrixWorld(true)
+}
+
+function emitEditState(): void {
+  if (!editSession) {
+    emit('edit-state', {
+      editing: false,
+      name: '',
+      duration: 0,
+      fps: 30,
+      time: 0,
+      playing: false,
+      keyCount: 0,
+      boneKeys: [],
+      dirty: false
+    })
+    return
+  }
+  let keyCount = 0
+  for (const track of editSession.tracks.values()) keyCount += track.times.length
+  const selectedName = selectedBone?.name
+  const selectedTrack = selectedName ? editSession.tracks.get(selectedName) : undefined
+  emit('edit-state', {
+    editing: true,
+    name: editSession.name,
+    duration: editSession.duration,
+    fps: editSession.fps,
+    time: editTime,
+    playing: editPlaying,
+    keyCount,
+    boneKeys: selectedTrack ? [...selectedTrack.times] : [],
+    dirty: editSession.dirty
+  })
+}
+
+function emitEditTick(): void {
+  emit('tick', {
+    time: editTime,
+    duration: editSession?.duration ?? 0,
+    playing: editPlaying,
+    index: -1
+  })
+}
+
+function beginEdit(options: {
+  name?: string
+  origin: 'native' | 'library' | 'custom'
+  sourceKind?: string
+  clipIndex?: number
+  kind?: ActionKind
+  tracks?: ModelActionTrack[]
+  duration?: number
+  loop?: boolean
+}): { ok: boolean; message?: string } {
+  if (!mixer) return { ok: false, message: '模型还没加载完' }
+  mixer.stopAllAction()
+  activeAction = null
+  generatedClip = null
+
+  let tracks = new Map<string, EditTrack>()
+  let name = options.name ?? '精修动作'
+  let duration = options.duration ?? 2
+  let loop = options.loop ?? true
+  let sourceKind = options.sourceKind
+  const fps = 30
+
+  if (options.tracks && options.tracks.length > 0) {
+    tracks = tracksFromSaved(options.tracks)
+    const maxTime = Math.max(...options.tracks.map((item) => item.times[item.times.length - 1] ?? 0))
+    duration = Math.max(duration, maxTime)
+  } else if (options.kind) {
+    const pose = buildPoseClip(options.kind)
+    if (!pose) return { ok: false, message: '该模型没有可用骨骼，无法精修动作' }
+    tracks = tracksFromPoseClip(pose)
+    name = options.name ?? pose.name
+    duration = pose.duration
+    loop = options.loop ?? pose.loop
+    sourceKind = options.kind
+  } else if (options.clipIndex !== undefined) {
+    const action = actions[options.clipIndex]
+    if (!action) return { ok: false, message: '找不到该动画片段' }
+    const clip = action.getClip()
+    tracks = sampleNativeClip(clip)
+    name = options.name ?? clip.name ?? '模型动作'
+    duration = clip.duration
+    loop = options.loop ?? true
+  }
+
+  if (tracks.size === 0) return { ok: false, message: '没有可编辑的骨骼轨道' }
+
+  // 先把姿态复位，避免残留上一段动作
+  for (const [id, bone] of boneObjects) {
+    const rest = initialLocal.get(id)
+    if (!rest) continue
+    bone.position.copy(rest.position)
+    bone.quaternion.copy(rest.quaternion)
+    bone.scale.copy(rest.scale)
+  }
+  editSession = {
+    name,
+    duration: Math.max(duration, 0.1),
+    loop,
+    fps,
+    origin: options.origin,
+    sourceKind,
+    tracks,
+    dirty: false
+  }
+  editTime = 0
+  editPlaying = false
+  sampleEditTracks(0)
+  emitEditState()
+  emitEditTick()
+  return { ok: true }
+}
+
+function endEdit(): void {
+  editSession = null
+  editPlaying = false
+  editTime = 0
+  emitEditState()
+}
+
+function playEdit(): void {
+  if (!editSession) return
+  editPlaying = true
+  emitEditState()
+  emitEditTick()
+}
+
+function pauseEdit(): void {
+  editPlaying = false
+  emitEditState()
+  emitEditTick()
+}
+
+function seekEdit(time: number): void {
+  if (!editSession) return
+  const clamped = Math.min(Math.max(time, 0), editSession.duration)
+  editTime = clamped
+  sampleEditTracks(clamped)
+  emitEditState()
+  emitEditTick()
+}
+
+function stepEditFrame(delta: number): void {
+  if (!editSession) return
+  seekEdit(editTime + delta / editSession.fps)
+}
+
+function setKey(track: EditTrack, time: number, quat: THREE.Quaternion): void {
+  const epsilon = 1 / 240
+  const existing = track.times.findIndex((value) => Math.abs(value - time) < epsilon)
+  if (existing >= 0) {
+    track.quats[existing].copy(quat)
+    track.times[existing] = Number(time.toFixed(4))
+    return
+  }
+  let index = track.times.findIndex((value) => value > time)
+  if (index < 0) index = track.times.length
+  track.times.splice(index, 0, Number(time.toFixed(4)))
+  track.quats.splice(index, 0, quat.clone())
+}
+
+/** 把当前选中骨骼的姿态记一个关键帧 */
+function recordKey(): { ok: boolean; message?: string } {
+  if (!editSession) return { ok: false, message: '当前不在精修模式' }
+  if (!selectedBone || !selectedBone.name) return { ok: false, message: '先选中一根骨骼' }
+  const name = selectedBone.name
+  let track = editSession.tracks.get(name)
+  if (!track) {
+    track = { times: [], quats: [] }
+    editSession.tracks.set(name, track)
+  }
+  setKey(track, editTime, selectedBone.quaternion)
+  editSession.dirty = true
+  emitEditState()
+  return { ok: true }
+}
+
+/** 记录整帧：所有已有轨道的骨骼都在当前时间打一帧 */
+function recordAllKeys(): { ok: boolean; count: number } {
+  if (!editSession) return { ok: false, count: 0 }
+  let count = 0
+  for (const [boneName, track] of editSession.tracks) {
+    const bone = boneByName.get(boneName)
+    if (!bone) continue
+    setKey(track, editTime, bone.quaternion)
+    count += 1
+  }
+  editSession.dirty = true
+  emitEditState()
+  return { ok: true, count }
+}
+
+/** 删除当前时间点上选中骨骼的关键帧 */
+function deleteKey(): { ok: boolean; message?: string } {
+  if (!editSession) return { ok: false, message: '当前不在精修模式' }
+  if (!selectedBone?.name) return { ok: false, message: '先选中一根骨骼' }
+  const track = editSession.tracks.get(selectedBone.name)
+  if (!track) return { ok: false, message: '这根骨骼还没有关键帧' }
+  const epsilon = 1 / 240
+  const index = track.times.findIndex((value) => Math.abs(value - editTime) < epsilon)
+  if (index < 0) return { ok: false, message: '当前帧没有关键帧' }
+  track.times.splice(index, 1)
+  track.quats.splice(index, 1)
+  editSession.dirty = true
+  emitEditState()
+  return { ok: true }
+}
+
+function getEditResult(): ModelActionInput | null {
+  if (!editSession) return null
+  const tracks: ModelActionTrack[] = []
+  for (const [bone, track] of editSession.tracks) {
+    if (track.times.length === 0) continue
+    const quats: number[] = []
+    for (const quat of track.quats) quats.push(quat.x, quat.y, quat.z, quat.w)
+    tracks.push({ bone, times: [...track.times], quats })
+  }
+  if (tracks.length === 0) return null
+  return {
+    name: editSession.name,
+    duration: editSession.duration,
+    loop: editSession.loop,
+    fps: editSession.fps,
+    origin: editSession.origin,
+    sourceKind: editSession.sourceKind,
+    tracks,
+    edited: true
+  }
+}
+
+/** 播放一条已绑定到模型的动作 */
+function playStoredAction(action: ModelAction): { ok: boolean; message?: string } {
+  if (!mixer) return { ok: false, message: '模型还没加载完' }
+  const tracks: THREE.KeyframeTrack[] = []
+  for (const track of action.tracks) {
+    const bone = boneByName.get(track.bone)
+    if (!bone || track.times.length === 0) continue
+    tracks.push(new THREE.QuaternionKeyframeTrack(`${bone.uuid}.quaternion`, track.times, track.quats))
+  }
+  if (tracks.length === 0) return { ok: false, message: '这条动作没有可用的骨骼轨道' }
+  const clip = new THREE.AnimationClip(action.name, action.duration, tracks)
+  playAnimationClip(clip, action.loop)
+  return { ok: true }
 }
 
 /* ------------------------------- 相机与网格 ------------------------------- */
@@ -787,6 +1146,9 @@ function clearModel(): void {
   clearSelectionVisual()
   gizmo?.detach()
   if (gizmo) gizmo.getHelper().visible = false
+  editSession = null
+  editPlaying = false
+  editTime = 0
   disposeSkeletonOverlay()
   if (mixer) {
     mixer.stopAllAction()
@@ -1064,6 +1426,20 @@ function animate(): void {
   const delta = Math.min((now - lastFrame) / 1000, 0.1)
   lastFrame = now
   if (mixer && activeAction && !activeAction.paused) mixer.update(delta)
+  // 精修模式自己驱动播放头，不走 mixer
+  if (editSession && editPlaying) {
+    editTime += delta
+    if (editTime > editSession.duration) {
+      editTime = editSession.loop ? editTime % editSession.duration : editSession.duration
+      if (!editSession.loop) editPlaying = false
+    }
+    sampleEditTracks(editTime)
+    if (now - lastTick > 100) {
+      lastTick = now
+      emitEditState()
+      emitEditTick()
+    }
+  }
   controls?.update()
   // 骨骼在动，关节球和连线要跟着刷新
   if (boneOverlay) updateSkeletonOverlay()
@@ -1265,6 +1641,17 @@ defineExpose({
   setBoneTransform,
   resetBone,
   resetPose,
+  beginEdit,
+  endEdit,
+  playEdit,
+  pauseEdit,
+  seekEdit,
+  stepEditFrame,
+  recordKey,
+  recordAllKeys,
+  deleteKey,
+  getEditResult,
+  playStoredAction,
   focusNode,
   playClip,
   pauseClip,

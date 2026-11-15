@@ -12,6 +12,8 @@ import type {
   ComfyRunRequest,
   ComfyStatus,
   ComfyWorkflow,
+  ModelAction,
+  ModelActionInput,
   ModelAsset,
   ModelConfigPatch,
   ModelConfigView,
@@ -94,6 +96,10 @@ const api: BridgeApi = {
       ipcRenderer.invoke(IPC.model.saveGroup, modelId, name, partKeys),
     removeGroup: (modelId: string, groupId: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(IPC.model.removeGroup, modelId, groupId),
+    saveAction: (modelId: string, input: ModelActionInput): Promise<ModelAction> =>
+      ipcRenderer.invoke(IPC.model.saveAction, modelId, input),
+    removeAction: (modelId: string, actionId: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(IPC.model.removeAction, modelId, actionId),
     exportGroup: (payload: {
       modelId: string
       name: string

@@ -3,6 +3,10 @@ import path from 'node:path'
 import { BrowserWindow, dialog, safeStorage, shell } from 'electron'
 import type {
   ApiKeyTestResult,
+  ModelAction,
+  ModelActionInput,
+  ModelActionOrigin,
+  ModelActionTrack,
   ModelAsset,
   ModelConfigPatch,
   ModelConfigView,
@@ -254,6 +258,79 @@ export function removeModelGroup(modelId: string, groupId: string): { ok: boolea
   model.updatedAt = now()
   persist()
   return { ok: (model.groups.length ?? 0) < before }
+}
+
+/** 单条轨道最多关键帧数 / 单个动作最多轨道数，防止脏数据把库撑爆 */
+const MAX_KEYS_PER_TRACK = 600
+const MAX_TRACKS_PER_ACTION = 640
+
+function sanitizeActionInput(input: ModelActionInput): {
+  name: string
+  duration: number
+  loop: boolean
+  fps: number
+  origin: ModelActionOrigin
+  sourceKind?: string
+  edited: boolean
+  tracks: ModelActionTrack[]
+} {
+  const name = (input.name ?? '').trim().slice(0, 60) || '精修动作'
+  const duration = Number(input.duration)
+  if (!Number.isFinite(duration) || duration <= 0 || duration > 600) {
+    throw new Error('动作时长不合法')
+  }
+  const tracks: ModelActionTrack[] = []
+  for (const track of input.tracks ?? []) {
+    const bone = String(track?.bone ?? '').trim()
+    const times = (track?.times ?? []).slice(0, MAX_KEYS_PER_TRACK)
+    const quats = (track?.quats ?? []).slice(0, MAX_KEYS_PER_TRACK * 4)
+    if (!bone || times.length === 0 || quats.length !== times.length * 4) continue
+    tracks.push({
+      bone,
+      times: times.map((value) => Number(value.toFixed(4))),
+      quats: quats.map((value) => Number(value.toFixed(6)))
+    })
+    if (tracks.length >= MAX_TRACKS_PER_ACTION) break
+  }
+  if (tracks.length === 0) throw new Error('动作没有可保存的骨骼轨道')
+  return {
+    name,
+    duration: Number(duration.toFixed(4)),
+    loop: Boolean(input.loop),
+    fps: Math.min(Math.max(Math.round(input.fps ?? 30), 1), 120),
+    origin: input.origin ?? 'custom',
+    sourceKind: input.sourceKind,
+    edited: Boolean(input.edited),
+    tracks
+  }
+}
+
+export function saveModelAction(modelId: string, input: ModelActionInput): ModelAction {
+  const model = requireModel(modelId)
+  const clean = sanitizeActionInput(input)
+  const action: ModelAction = {
+    id: `act_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+    createdAt: now(),
+    ...clean
+  }
+  model.actions = [...(model.actions ?? []), action]
+  model.updatedAt = now()
+  persist()
+  log(
+    'info',
+    '绑定动作',
+    `${model.name} / ${action.name}（${action.tracks.length} 根骨骼，${action.duration}s）`
+  )
+  return action
+}
+
+export function removeModelAction(modelId: string, actionId: string): { ok: boolean } {
+  const model = requireModel(modelId)
+  const before = model.actions?.length ?? 0
+  model.actions = (model.actions ?? []).filter((item) => item.id !== actionId)
+  model.updatedAt = now()
+  persist()
+  return { ok: (model.actions.length ?? 0) < before }
 }
 
 function safeFilePart(value: string): string {

@@ -53,15 +53,17 @@ import {
   pickImportDir,
   readModelFile,
   removeModel,
+  removeModelAction,
   removeModelGroup,
   revealModel,
+  saveModelAction,
   saveModelConfig,
   saveModelGroup,
   summarizeModels,
   testModelKey,
   updateModel
 } from './services/models'
-import type { ComfyRunRequest, WorkflowCategory } from '../shared/types'
+import type { ComfyRunRequest, ModelActionInput, WorkflowCategory } from '../shared/types'
 
 function listResources(query: ResourceQuery): PagedResult<ResourceItem> {
   const db = getDb()
@@ -286,6 +288,12 @@ export function registerIpc(): void {
   )
   ipcMain.handle(IPC.model.removeGroup, (_event, modelId: string, groupId: string) =>
     removeModelGroup(modelId, groupId)
+  )
+  ipcMain.handle(IPC.model.saveAction, (_event, modelId: string, input: ModelActionInput) =>
+    saveModelAction(modelId, input)
+  )
+  ipcMain.handle(IPC.model.removeAction, (_event, modelId: string, actionId: string) =>
+    removeModelAction(modelId, actionId)
   )
   ipcMain.handle(
     IPC.model.exportGroup,
