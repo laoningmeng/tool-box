@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  Aim,
   Brush,
   Camera,
   Delete,
@@ -820,7 +821,6 @@ async function reveal(): Promise<void> {
             分组 <span class="block__count">{{ groups.length }}</span>
             <el-button
               class="block__action"
-              link
               type="primary"
               size="small"
               :loading="savingGroup"
@@ -865,7 +865,15 @@ async function reveal(): Promise<void> {
         <section class="block">
           <h3 class="block__title">
             选中
-            <el-button v-if="selectedId" link type="primary" size="small" class="block__action" @click="focusSelected">
+            <el-button
+              v-if="selectedId"
+              type="primary"
+              plain
+              size="small"
+              class="block__action"
+              :icon="Aim"
+              @click="focusSelected"
+            >
               聚焦
             </el-button>
           </h3>
@@ -1396,9 +1404,14 @@ async function reveal(): Promise<void> {
 
 .block__action {
   margin-left: auto;
-  height: auto;
-  padding: 0;
+  height: 22px;
+  padding: 0 8px;
   font-size: 11.5px;
+  flex: none;
+}
+
+.block__action :deep(.el-icon) {
+  font-size: 12px;
 }
 
 .block__empty {
