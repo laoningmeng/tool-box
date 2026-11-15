@@ -43,6 +43,9 @@ export const useAppStore = defineStore('app', () => {
   const systemInfo = ref<AppSystemInfo | null>(null)
   const pythonStatus = ref<PythonStatus | null>(null)
   const sidebarCollapsed = ref(localStorage.getItem('app:sidebar') === '1')
+  /** 沉浸模式：隐藏侧栏与顶栏，把整窗留给当前页面（实验台用）。不持久化，避免下次启动卡在无导航的界面 */
+  const immersive = ref(false)
+  const fullscreen = ref(false)
   const ready = ref(false)
   const loadingSystemInfo = ref(false)
   const darkMedia = window.matchMedia('(prefers-color-scheme: dark)')
@@ -79,9 +82,51 @@ export const useAppStore = defineStore('app', () => {
     localStorage.setItem('app:sidebar', sidebarCollapsed.value ? '1' : '0')
   }
 
+  /** 沉浸模式：藏掉侧栏与顶栏，页面独占整个窗口 */
+  function applyImmersive(): void {
+    document.documentElement.classList.toggle('immersive', immersive.value)
+  }
+
+  function toggleImmersive(value?: boolean): void {
+    immersive.value = value ?? !immersive.value
+    applyImmersive()
+  }
+
+  async function toggleFullscreen(): Promise<boolean> {
+    fullscreen.value = await window.api.window.toggleFullscreen()
+    return fullscreen.value
+  }
+
+  async function syncFullscreen(): Promise<void> {
+    try {
+      fullscreen.value = await window.api.window.isFullscreen()
+    } catch {
+      fullscreen.value = false
+    }
+  }
+
+  /**
+   * 专注模式：系统全屏 + 隐藏侧栏/顶栏 一起切换。
+   * 实验台这种要大画布的页面用，退出时两样一起还原。
+   */
+  async function toggleFocusMode(): Promise<boolean> {
+    const next = !immersive.value
+    toggleImmersive(next)
+    if (next !== fullscreen.value) await toggleFullscreen()
+    return next
+  }
+
+  /** 离开实验台等需要沉浸的页面时，把全屏与隐藏一起收回来，避免卡在没有导航的界面 */
+  async function exitFocusMode(): Promise<void> {
+    if (immersive.value) toggleImmersive(false)
+    if (fullscreen.value) await toggleFullscreen()
+  }
+
   async function load(): Promise<void> {
     settings.value = await window.api.settings.get()
     applyTheme()
+    applyImmersive()
+    void syncFullscreen()
     void loadSystemInfo()
     void loadPythonStatus()
   }
@@ -128,6 +173,8 @@ export const useAppStore = defineStore('app', () => {
     systemInfo,
     pythonStatus,
     sidebarCollapsed,
+    immersive,
+    fullscreen,
     ready,
     isDark,
     systemName,
@@ -139,6 +186,11 @@ export const useAppStore = defineStore('app', () => {
     reset,
     applyTheme,
     toggleSidebar,
+    toggleImmersive,
+    toggleFullscreen,
+    syncFullscreen,
+    toggleFocusMode,
+    exitFocusMode,
     markReady,
     loadingSystemInfo,
     /** 兼容旧调用：init 等同 load */

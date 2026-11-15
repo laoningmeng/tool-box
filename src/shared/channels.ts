@@ -22,7 +22,9 @@ export const IPC = {
     toggleMaximize: 'window:toggle-maximize',
     close: 'window:close',
     isMaximized: 'window:is-maximized',
-    setTitlebar: 'window:set-titlebar'
+    setTitlebar: 'window:set-titlebar',
+    toggleFullscreen: 'window:toggle-fullscreen',
+    isFullscreen: 'window:is-fullscreen'
   },
   resource: {
     list: 'resource:list',

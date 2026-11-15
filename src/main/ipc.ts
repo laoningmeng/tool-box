@@ -212,6 +212,15 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.window.isMaximized, (event) => {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
   })
+  ipcMain.handle(IPC.window.toggleFullscreen, (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return false
+    win.setFullScreen(!win.isFullScreen())
+    return win.isFullScreen()
+  })
+  ipcMain.handle(IPC.window.isFullscreen, (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false
+  })
   // 渲染层换主题 / 改标题栏配色时同步 Windows 原生窗口按钮区（titleBarOverlay）
   ipcMain.on(IPC.window.setTitlebar, (event, options: { color: string; symbolColor: string }) => {
     const win = BrowserWindow.fromWebContents(event.sender)

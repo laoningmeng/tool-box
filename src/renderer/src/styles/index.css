@@ -449,3 +449,17 @@ html.compact .el-table .cell {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ==========================================================================
+   沉浸模式（实验台等需要大画布的页面）：藏掉侧栏与顶栏
+   ========================================================================== */
+html.immersive .sidebar,
+html.immersive .header {
+  display: none !important;
+}
+
+/* 沉浸时页面上下留白收一点，把高度也让给内容 */
+html.immersive .app-page {
+  padding: 12px 16px 16px;
+  gap: 12px;
+}

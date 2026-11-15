@@ -64,6 +64,8 @@ const api: BridgeApi = {
     toggleMaximize: (): void => ipcRenderer.send(IPC.window.toggleMaximize),
     close: (): void => ipcRenderer.send(IPC.window.close),
     isMaximized: (): Promise<boolean> => ipcRenderer.invoke(IPC.window.isMaximized),
+    toggleFullscreen: (): Promise<boolean> => ipcRenderer.invoke(IPC.window.toggleFullscreen),
+    isFullscreen: (): Promise<boolean> => ipcRenderer.invoke(IPC.window.isFullscreen),
     setTitlebar: (options: { color: string; symbolColor: string }): void =>
       ipcRenderer.send(IPC.window.setTitlebar, options)
   },

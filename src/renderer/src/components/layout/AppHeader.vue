@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowRight, Bell, Expand, Fold, Moon, Sunny } from '@element-plus/icons-vue'
+import { ArrowRight, Bell, Expand, Fold, FullScreen, Moon, Sunny } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@renderer/stores/app'
 
@@ -48,6 +48,11 @@ async function toggleTheme(): Promise<void> {
     </div>
 
     <div class="header__right">
+      <el-tooltip :content="appStore.fullscreen ? '退出全屏' : '全屏'" placement="bottom">
+        <button class="icon-btn" type="button" @click="appStore.toggleFullscreen()">
+          <el-icon><FullScreen /></el-icon>
+        </button>
+      </el-tooltip>
       <el-tooltip :content="appStore.isDark ? '切换为亮色' : '切换为暗色'" placement="bottom">
         <button class="icon-btn" type="button" @click="toggleTheme">
           <el-icon><component :is="appStore.isDark ? Sunny : Moon" /></el-icon>

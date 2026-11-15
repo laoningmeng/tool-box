@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -8,6 +8,7 @@ import {
   Delete,
   Download,
   FolderOpened,
+  FullScreen,
   Grid,
   Hide,
   RefreshLeft,
@@ -22,6 +23,7 @@ import {
 import type { ModelAsset, ModelPartGroup } from '@shared/types'
 import { MODEL_SOURCE_META } from '@shared/constants'
 import { useModelStore } from '@renderer/stores/models'
+import { useAppStore } from '@renderer/stores/app'
 import { formatBytes, formatDateTime } from '@renderer/utils/format'
 import ModelViewer from '@renderer/components/ModelViewer.vue'
 import type { SemanticSummary, ViewerStructure } from '@renderer/components/model-viewer-types'
@@ -44,6 +46,7 @@ type Tab = 'parts' | 'bones'
 const route = useRoute()
 const router = useRouter()
 const store = useModelStore()
+const appStore = useAppStore()
 
 const model = ref<ModelAsset | null>(null)
 const bytes = ref<Uint8Array | null>(null)
@@ -171,6 +174,11 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+})
+
+// 离开实验台时自动退出全屏/沉浸，避免侧栏被藏起来后没地方点回来
+onBeforeUnmount(() => {
+  if (appStore.immersive || appStore.fullscreen) void appStore.exitFocusMode()
 })
 
 function handleParsed(next: ViewerStructure): void {
@@ -560,6 +568,17 @@ async function reveal(): Promise<void> {
       <!-- 中：视口 + 工具条 + 时间轴 -->
       <section class="lab__viewport">
         <div class="view-toolbar">
+          <el-tooltip :content="appStore.immersive ? '退出全屏' : '全屏：整窗留给实验台'" placement="bottom">
+            <el-button
+              size="small"
+              :icon="FullScreen"
+              :type="appStore.immersive ? 'primary' : 'default'"
+              @click="appStore.toggleFocusMode()"
+            >
+              {{ appStore.immersive ? '退出全屏' : '全屏' }}
+            </el-button>
+          </el-tooltip>
+          <span class="view-toolbar__sep" />
           <el-tooltip content="重置视角" placement="bottom">
             <el-button size="small" :icon="RefreshLeft" @click="resetView" />
           </el-tooltip>

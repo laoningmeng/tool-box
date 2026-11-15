@@ -431,6 +431,9 @@ export interface WindowApi {
   toggleMaximize(): void
   close(): void
   isMaximized(): Promise<boolean>
+  /** 切换系统全屏（F11 那种真全屏，不含应用内布局） */
+  toggleFullscreen(): Promise<boolean>
+  isFullscreen(): Promise<boolean>
   /**
    * 同步 Windows 原生窗口按钮覆盖层（titleBarOverlay）的配色。
    * color 要等于自绘标题栏右端的纯色，否则右上角会出现一块不同颜色的矩形。
