@@ -243,6 +243,114 @@ export interface ComfyOutputData {
   bytes: number
 }
 
+/* -------------------------------- 3D 模型 -------------------------------- */
+
+/** 模型来源工具：本地导入的模型分别由这三个工具导出 */
+export type ModelSource = 'tripo' | 'meshy' | 'blender' | 'unknown'
+
+export type ModelFormat = 'glb' | 'gltf' | 'fbx' | 'obj' | 'blend' | 'zip' | 'other'
+
+export interface ModelAsset {
+  id: string
+  name: string
+  /** 来源工具（按路径与扩展名自动识别，可在列表里手动改） */
+  source: ModelSource
+  format: ModelFormat
+  /** 源文件绝对路径，库只做引用，不复制文件 */
+  path: string
+  /** 字节数 */
+  size: number
+  note: string
+  tags: string[]
+  createdAt: string
+  updatedAt: string
+  /** 查询时实时计算（文件是否还在），不落库 */
+  exists?: boolean
+}
+
+export interface ModelInput {
+  name?: string
+  source?: ModelSource
+  note?: string
+  tags?: string[]
+}
+
+export interface ModelQuery {
+  keyword?: string
+  source?: ModelSource | 'all'
+  format?: ModelFormat | 'all'
+}
+
+export interface ModelSummary {
+  total: number
+  /** 总体积（字节） */
+  bytes: number
+  bySource: Record<ModelSource, number>
+}
+
+export interface ModelImportResult {
+  ok: boolean
+  canceled: boolean
+  /** 新入库数量 */
+  added: number
+  /** 已存在（同路径）跳过数量 */
+  skipped: number
+  items: ModelAsset[]
+  message?: string
+}
+
+/** 密钥类配置的对外视图：永远不回传明文 */
+export interface SecretState {
+  configured: boolean
+  /** 形如 sk-ab••••1a2b，未配置为空串 */
+  masked: string
+}
+
+export interface ModelConfigView {
+  defaultImportDir: string
+  autoDetectSource: boolean
+  tripo: SecretState
+  meshy: SecretState
+  /** 当前系统是否提供安全存储（Windows DPAPI / macOS Keychain） */
+  secureStorage: boolean
+}
+
+export interface ModelConfigPatch {
+  /** 传空串表示清除；不传表示不改 */
+  tripoApiKey?: string
+  meshyApiKey?: string
+  defaultImportDir?: string
+  autoDetectSource?: boolean
+}
+
+/** 落库形态：密钥可能是 `enc:v1:` 密文，渲染层不要直接使用 */
+export interface ModelConfigStored {
+  tripoApiKey: string
+  meshyApiKey: string
+  defaultImportDir: string
+  autoDetectSource: boolean
+}
+
+export interface ModelApi {
+  list(query?: ModelQuery): Promise<ModelAsset[]>
+  summary(): Promise<ModelSummary>
+  /**
+   * 导入模型：不传 paths 时打开系统文件选择框（支持多选）；
+   * 传了 paths 则直接按这些路径入库（供拖拽导入 / 自动化验收使用）。
+   */
+  import(paths?: string[]): Promise<ModelImportResult>
+  update(id: string, input: ModelInput): Promise<ModelAsset>
+  remove(id: string): Promise<{ ok: boolean }>
+  /** 在系统文件管理器中定位该模型 */
+  reveal(id: string): Promise<void>
+}
+
+export interface ModelConfigApi {
+  get(): Promise<ModelConfigView>
+  save(patch: ModelConfigPatch): Promise<ModelConfigView>
+  pickImportDir(): Promise<string | null>
+}
+
 /* ---------------------------------- API ---------------------------------- */
 
 export interface SettingsApi {
@@ -320,6 +428,8 @@ export interface BridgeApi {
   system: SystemApi
   window: WindowApi
   resource: ResourceApi
+  model: ModelApi
+  modelConfig: ModelConfigApi
   python: PythonApi
   comfy: ComfyApi
 }

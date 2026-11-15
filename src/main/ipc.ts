@@ -5,6 +5,9 @@ import type {
   AppSettings,
   AppSystemInfo,
   BackupResult,
+  ModelConfigPatch,
+  ModelInput,
+  ModelQuery,
   PagedResult,
   ResourceInput,
   ResourceItem,
@@ -42,6 +45,17 @@ import {
   injectInputs
 } from './services/comfy'
 import { parseWorkflowFile, uploadWorkflow, cancelJob } from './services/workflow'
+import {
+  getModelConfigView,
+  importModels,
+  listModels,
+  pickImportDir,
+  removeModel,
+  revealModel,
+  saveModelConfig,
+  summarizeModels,
+  updateModel
+} from './services/models'
 import type { ComfyRunRequest, WorkflowCategory } from '../shared/types'
 
 function listResources(query: ResourceQuery): PagedResult<ResourceItem> {
@@ -242,6 +256,19 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.resource.categories, () => {
     return [...new Set(getDb().resources.map((item) => item.category))].filter(Boolean)
   })
+
+  /* -------------------------------- 3D 模型 -------------------------------- */
+  ipcMain.handle(IPC.model.list, (_event, query?: ModelQuery) => listModels(query ?? {}))
+  ipcMain.handle(IPC.model.summary, () => summarizeModels())
+  ipcMain.handle(IPC.model.import, (event, paths?: string[]) =>
+    importModels(BrowserWindow.fromWebContents(event.sender), paths)
+  )
+  ipcMain.handle(IPC.model.update, (_event, id: string, input: ModelInput) => updateModel(id, input))
+  ipcMain.handle(IPC.model.remove, (_event, id: string) => removeModel(id))
+  ipcMain.handle(IPC.model.reveal, (_event, id: string) => revealModel(id))
+  ipcMain.handle(IPC.modelConfig.get, () => getModelConfigView())
+  ipcMain.handle(IPC.modelConfig.save, (_event, patch: ModelConfigPatch) => saveModelConfig(patch))
+  ipcMain.handle(IPC.modelConfig.pickDir, (event) => pickImportDir(BrowserWindow.fromWebContents(event.sender)))
 
   /* --------------------------------- Python -------------------------------- */
   ipcMain.handle(IPC.python.status, async () => {

@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Box,
+  Collection,
   Connection,
   DataBoard,
   Expand,
@@ -32,6 +33,15 @@ const navItems: NavItem[] = [
   { path: '/dashboard', title: '工作台', icon: DataBoard },
   { path: '/resources', title: '资源管理', icon: Box },
   {
+    path: '/models',
+    title: '3D 模型管理',
+    icon: Collection,
+    children: [
+      { path: '/models', title: '模型列表' },
+      { path: '/models/config', title: '配置管理' }
+    ]
+  },
+  {
     path: '/workflow',
     title: '工作流管理',
     icon: Connection,
@@ -49,7 +59,7 @@ const router = useRouter()
 
 const collapsed = computed(() => appStore.sidebarCollapsed)
 const activePath = computed(() => route.path)
-const expanded = ref<string[]>(['/workflow'])
+const expanded = ref<string[]>(['/models', '/workflow'])
 
 function isActive(path: string): boolean {
   return activePath.value === path || activePath.value.startsWith(`${path}/`)

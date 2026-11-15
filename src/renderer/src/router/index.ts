@@ -26,6 +26,18 @@ const router = createRouter({
           meta: { title: '资源管理', group: '业务' }
         },
         {
+          path: 'models',
+          name: 'models',
+          component: () => import('@renderer/views/models/index.vue'),
+          meta: { title: '模型列表', group: '3D 模型管理' }
+        },
+        {
+          path: 'models/config',
+          name: 'model-config',
+          component: () => import('@renderer/views/models/config.vue'),
+          meta: { title: '配置管理', group: '3D 模型管理' }
+        },
+        {
           path: 'workflow',
           name: 'workflow',
           component: () => import('@renderer/views/workflow/index.vue'),

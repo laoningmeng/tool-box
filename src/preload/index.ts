@@ -11,6 +11,13 @@ import type {
   ComfyRunRequest,
   ComfyStatus,
   ComfyWorkflow,
+  ModelAsset,
+  ModelConfigPatch,
+  ModelConfigView,
+  ModelImportResult,
+  ModelInput,
+  ModelQuery,
+  ModelSummary,
   PagedResult,
   PythonRuntimeInfo,
   PythonStatus,
@@ -67,6 +74,22 @@ const api: BridgeApi = {
       ipcRenderer.invoke(IPC.resource.update, id, input),
     remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.resource.remove, id),
     categories: (): Promise<string[]> => ipcRenderer.invoke(IPC.resource.categories)
+  },
+  model: {
+    list: (query?: ModelQuery): Promise<ModelAsset[]> => ipcRenderer.invoke(IPC.model.list, query),
+    summary: (): Promise<ModelSummary> => ipcRenderer.invoke(IPC.model.summary),
+    import: (paths?: string[]): Promise<ModelImportResult> =>
+      ipcRenderer.invoke(IPC.model.import, paths),
+    update: (id: string, input: ModelInput): Promise<ModelAsset> =>
+      ipcRenderer.invoke(IPC.model.update, id, input),
+    remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.model.remove, id),
+    reveal: (id: string): Promise<void> => ipcRenderer.invoke(IPC.model.reveal, id)
+  },
+  modelConfig: {
+    get: (): Promise<ModelConfigView> => ipcRenderer.invoke(IPC.modelConfig.get),
+    save: (patch: ModelConfigPatch): Promise<ModelConfigView> =>
+      ipcRenderer.invoke(IPC.modelConfig.save, patch),
+    pickImportDir: (): Promise<string | null> => ipcRenderer.invoke(IPC.modelConfig.pickDir)
   },
   python: {
     status: (): Promise<PythonStatus> => ipcRenderer.invoke(IPC.python.status),

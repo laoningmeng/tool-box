@@ -1,8 +1,19 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
-import type { AppSettings, ComfyWorkflow, ResourceItem } from '../shared/types'
-import { defaultSettings, seedResources, seedWorkflows } from '../shared/seed'
+import type {
+  AppSettings,
+  ComfyWorkflow,
+  ModelAsset,
+  ModelConfigStored,
+  ResourceItem
+} from '../shared/types'
+import {
+  defaultModelConfig,
+  defaultSettings,
+  seedResources,
+  seedWorkflows
+} from '../shared/seed'
 
 /**
  * 极简 JSON 数据库：单文件、原子写入、启动时合并默认值。
@@ -16,9 +27,13 @@ export interface Database {
   workflows: ComfyWorkflow[]
   /** 工作流流程图，与元数据分开存，避免列表接口返回大对象 */
   workflowGraphs: Record<string, Record<string, unknown>>
+  /** 3D 模型库（只存引用，不复制源文件） */
+  models: ModelAsset[]
+  /** 3D 工具配置（API Key 可能是 enc:v1: 密文） */
+  modelConfig: ModelConfigStored
 }
 
-const DB_VERSION = 1
+const DB_VERSION = 2
 let db: Database | null = null
 let dbFile = ''
 
@@ -92,7 +107,10 @@ function seedDatabase(): Database {
     }),
     workflowGraphs: Object.fromEntries(
       seedWorkflows.map((item) => [item.id, item.graph as Record<string, unknown>])
-    )
+    ),
+    // 模型库默认为空：这些文件在用户本机，不能伪造示例路径
+    models: [],
+    modelConfig: { ...defaultModelConfig }
   }
 }
 
@@ -112,7 +130,9 @@ function mergeDefaults(raw: Partial<Database>): Database {
     workflowGraphs:
       raw.workflowGraphs && typeof raw.workflowGraphs === 'object'
         ? (raw.workflowGraphs as Record<string, Record<string, unknown>>)
-        : base.workflowGraphs
+        : base.workflowGraphs,
+    models: Array.isArray(raw.models) ? (raw.models as ModelAsset[]) : base.models,
+    modelConfig: { ...base.modelConfig, ...(raw.modelConfig ?? {}) }
   }
 }
 

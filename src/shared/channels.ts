@@ -32,6 +32,19 @@ export const IPC = {
     remove: 'resource:remove',
     categories: 'resource:categories'
   },
+  model: {
+    list: 'model:list',
+    summary: 'model:summary',
+    import: 'model:import',
+    update: 'model:update',
+    remove: 'model:remove',
+    reveal: 'model:reveal'
+  },
+  modelConfig: {
+    get: 'model-config:get',
+    save: 'model-config:save',
+    pickDir: 'model-config:pick-dir'
+  },
   python: {
     status: 'python:status',
     runtime: 'python:runtime',

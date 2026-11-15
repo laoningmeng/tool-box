@@ -1,4 +1,4 @@
-import type { AppSettings, ComfyWorkflow, ResourceItem } from './types'
+import type { AppSettings, ComfyWorkflow, ModelConfigStored, ResourceItem } from './types'
 
 /** 首次启动写入数据库的默认设置 */
 export const defaultSettings: AppSettings = {
@@ -22,6 +22,14 @@ export const defaultSettings: AppSettings = {
   modelDir: '',
   comfyUrl: 'http://127.0.0.1:8188',
   autoStartPython: true
+}
+
+/** 3D 模型模块的默认配置（密钥留空，首次进入配置管理页填写） */
+export const defaultModelConfig: ModelConfigStored = {
+  tripoApiKey: '',
+  meshyApiKey: '',
+  defaultImportDir: '',
+  autoDetectSource: true
 }
 
 /** 示例数据：用于占位，接入真实业务时删掉或改造成导入功能 */

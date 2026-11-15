@@ -24,6 +24,8 @@ npm run dist                # 打包 Windows NSIS 安装包到 release/
 | --- | --- | --- |
 | 工作台 | `#/dashboard` | 欢迎区 + 4 张统计卡 + 最近资源表，数据来自本地数据库 |
 | 资源管理 | `#/resources` | 通用增删改查：搜索、分组/状态筛选、分页、弹窗表单校验 |
+| 3D 模型管理 | `#/models` | 模型列表：导入本机导出的 3D 文件（glb/gltf/fbx/obj/blend），自动识别 Tripo / Meshy / Blender 来源，统计与筛选 |
+| ↳ 配置管理 | `#/models/config` | Tripo / Meshy API Key（safeStorage 加密落库，只回显掩码）+ 默认导入目录 + 来源识别开关 |
 | 工作流管理 | `#/workflow` | 流程列表（分类聚合、上传 API 格式 JSON、解析报告）+ 执行页（参数表单、进度轮询、出图预览） |
 | 系统设置 | `#/settings` | 基础设置 / 外观（主题色即时生效）/ 存储与数据 / 关于系统 四栏 |
 | 404 | 任意未知路由 | 独立样式页，带返回入口 |
@@ -39,8 +41,8 @@ src/
   renderer/       Vue 3 + Element Plus
     components/layout/   AppTitlebar / AppHeader / AppSidebar
     layouts/MainLayout.vue
-    views/         dashboard · resources · workflow · settings · not-found
-    stores/        app（设置/主题/侧栏）· resources · workflow
+    views/         dashboard · resources · models · workflow · settings · not-found
+    stores/        app（设置/主题/侧栏）· resources · models · workflow
     styles/        设计令牌 variables.css + 全局样式 index.css
 runtime/backend/  项目内置 FastAPI 后端（日志/追踪/异常/任务/ORM，详见 runtime/backend/README.md）
 scripts/          run-app.ps1（启动）· setup-python.ps1（下载运行时）· install-backend-deps.ps1（装后端依赖）· smoke-test.mjs（CDP 冒烟验收）
@@ -99,11 +101,27 @@ GET  /api/comfy/output       取回生成结果          POST /api/comfy/upload
 
 细节（怎么加任务 / 加表 / 加接口）见 [runtime/backend/README.md](runtime/backend/README.md)。
 
+## 3D 模型模块
+
+数据源是用户本机从 **Tripo / Meshy / Blender** 导出的模型文件，模型库**只登记引用**，不复制文件：
+
+- 导入：系统文件选择框（多选）→ 记录路径、大小、格式 → 按路径/文件名里的 `tripo`、`meshy`、`blender`
+  特征识别来源（可关闭，只按扩展名推断 `.blend → Blender`），识别错可在「编辑」里手动改
+- 去重：同一绝对路径只登记一次（Windows 不区分大小写）；重复导入会提示「跳过 N 个已存在」
+- 移除：只出库，**不删磁盘文件**；列表会实时检查文件是否还在，丢失时标「文件丢失」并禁用「定位」
+- 统计：总数 / 三种来源数量 / 总体积
+- API Key：配置页填写的 Tripo、Meshy Key 由主进程用 `safeStorage`（Windows DPAPI / macOS Keychain）
+  加密后写入 `database.json`，渲染层只能拿到 `tsk_••••abcd` 这样的掩码，**明文不出主进程**
+
+`window.api.model.import(paths?)` 支持直接传路径数组（会跳过文件对话框），方便拖拽导入或自动化测试。
+
 ## 常见改造点
 
 | 想做什么 | 改哪里 |
 | --- | --- |
 | 换业务实体（资源 → 订单/客户/设备） | `shared/types.ts` 的 `ResourceItem`、`views/resources/**`、`main/ipc.ts` 的 resource 段 |
+| 3D 模型接真实接口（调 Tripo/Meshy 生成） | 密钥已在 `db.modelConfig`；新增 `main/services/tripo.ts`、`meshy.ts` 用密钥发请求，渲染层照 `models` 模块加 IPC 即可 |
+| 模型预览（three.js 渲染 glb） | `views/models` 加一个预览抽屉，用 `three` + `GLTFLoader` 读取 `path`（主进程需暴露读文件为 `blob:`/`file://`） |
 | 加一个新模块 | 复制 `views/resources` → 改 `router/index.ts` + `AppSidebar.vue` 的 `navItems` + `shared/channels.ts`/`types.ts` + `main/ipc.ts` |
 | 不要工作流模块 | 删 `views/workflow`、`stores/workflow.ts`、`main/services/*`、`runtime/`，再去掉 router / sidebar / channels 里的入口 |
 | 改产品名 | `shared/seed.ts` 的 `defaultSettings`（运行时也会以数据库里的值为准）或直接在「系统设置 → 基础设置」改 |

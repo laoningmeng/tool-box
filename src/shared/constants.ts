@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  ModelSource,
   ResourceItem,
   WorkflowCategory
 } from './types'
@@ -63,5 +64,25 @@ export const WORKFLOW_CATEGORY_META: Record<
 }
 
 export const WORKFLOW_CATEGORIES: WorkflowCategory[] = ['t2i', 'i2i', 'i2v']
+
+/** 3D 模型来源（导入时自动识别，可手动纠正） */
+export const MODEL_SOURCE_META: Record<
+  ModelSource,
+  { label: string; tone: 'success' | 'warning' | 'info' | 'danger'; hint: string }
+> = {
+  tripo: { label: 'Tripo', tone: 'success', hint: 'Tripo3D 导出的模型' },
+  meshy: { label: 'Meshy', tone: 'warning', hint: 'Meshy 导出的模型' },
+  blender: { label: 'Blender', tone: 'info', hint: 'Blender 导出的模型' },
+  unknown: { label: '未识别', tone: 'danger', hint: '路径里没有工具特征，仅按扩展名推断' }
+}
+
+export const MODEL_SOURCE_OPTIONS = [
+  { label: 'Tripo', value: 'tripo' },
+  { label: 'Meshy', value: 'meshy' },
+  { label: 'Blender', value: 'blender' },
+  { label: '未识别', value: 'unknown' }
+] as const
+
+export const MODEL_FORMAT_OPTIONS = ['glb', 'gltf', 'fbx', 'obj', 'blend', 'zip', 'other'] as const
 
 export const COMFY_SAMPLE_SIZE = ['512x512', '768x768', '1024x1024', '1280x720', '1024x576', '720x1280']
