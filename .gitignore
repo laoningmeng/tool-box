@@ -21,7 +21,7 @@ debug.log
 runtime/python/
 runtime/indextts-src/
 runtime/python-*/
-models/
+/models/
 .runtime/
 
 # Python 缓存与本地数据库
