@@ -22,7 +22,7 @@ const loading = ref(false)
 const errorText = ref('')
 const autoRotate = ref(true)
 const wireframe = ref(false)
-const stats = ref<{ triangles: number; meshes: number; size: string } | null>(null)
+const stats = ref<{ triangles: number; meshes: number; size: string; skinned: boolean } | null>(null)
 
 const visible = computed({
   get: () => props.modelValue,
@@ -60,8 +60,8 @@ watch(
   { immediate: true }
 )
 
-function handleLoaded(info: { triangles: number; meshes: number; size: string }): void {
-  stats.value = info
+function handleParsed(structure: { stats: { triangles: number; meshes: number; size: string; skinned: boolean } }): void {
+  stats.value = structure.stats
 }
 
 function handleError(message: string): void {
@@ -97,7 +97,7 @@ async function handleReveal(): Promise<void> {
           :wireframe="wireframe"
           :show-grid="true"
           background="#0b1220"
-          @loaded="handleLoaded"
+          @parsed="handleParsed"
           @error="handleError"
         />
         <div v-else v-loading="loading" class="preview__placeholder">
