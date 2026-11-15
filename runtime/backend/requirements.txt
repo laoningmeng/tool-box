@@ -1,0 +1,8 @@
+# 后端依赖（安装到项目内置 runtime/python 里，不污染宿主机）
+#   npm run setup:backend
+#
+# 运行时不满足时会打印明确提示，不会静默崩溃。
+fastapi>=0.110
+uvicorn>=0.27
+sqlalchemy>=2.0
+pydantic-settings>=2.0

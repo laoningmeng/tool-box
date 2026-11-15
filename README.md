@@ -12,6 +12,7 @@ npm run typecheck           # 类型检查（tsc + vue-tsc，需 0 报错）
 npm run build               # 构建 main / preload / renderer 三段产物到 out/
 npm run app                 # 构建后以桌面应用方式启动（自动 --no-sandbox）
 npm run setup:python        # 可选：下载内置 Python 运行时（工作流模块需要）
+npm run setup:backend       # 给内置运行时安装后端依赖（FastAPI / SQLAlchemy，setup:python 会自动带上）
 npm run app:debug           # 同上，额外开 --remote-debugging-port=9355
 npm run smoke               # 冒烟验收：CDP 断言页面 / IPC 并截图到 .tmp/screenshots
 npm run dist                # 打包 Windows NSIS 安装包到 release/
@@ -41,8 +42,8 @@ src/
     views/         dashboard · resources · workflow · settings · not-found
     stores/        app（设置/主题/侧栏）· resources · workflow
     styles/        设计令牌 variables.css + 全局样式 index.css
-runtime/backend/  项目内置 Python 后端（仅标准库，代理 ComfyUI）
-scripts/          run-app.ps1（启动）· setup-python.ps1（下载运行时）· smoke-test.mjs（CDP 冒烟验收）
+runtime/backend/  项目内置 FastAPI 后端（日志/追踪/异常/任务/ORM，详见 runtime/backend/README.md）
+scripts/          run-app.ps1（启动）· setup-python.ps1（下载运行时）· install-backend-deps.ps1（装后端依赖）· smoke-test.mjs（CDP 冒烟验收）
 ```
 
 ## 架构约定
@@ -61,6 +62,42 @@ scripts/          run-app.ps1（启动）· setup-python.ps1（下载运行时�
 npm run app:debug     # 终端 A：带调试端口启动
 npm run smoke         # 终端 B：跑断言
 ```
+
+## 内置后端（FastAPI）
+
+`runtime/backend` 是一个完整的 FastAPI 骨架，被 Electron 主进程以子进程拉起，只监听 `127.0.0.1`，
+每次启动随机端口 + 随机 `X-App-Token`。它提供四块基础设施，业务代码直接往里填：
+
+| 能力 | 文件 | 说明 |
+| --- | --- | --- |
+| 配置 | `app/core/config.py` | `APP_*` 环境变量 / 命令行参数，一处读取 |
+| 日志管理 | `app/core/logging.py` | 控制台 + 5MB 轮转文件（`<userData>/data/logs/backend.log`），text / json 可切 |
+| 全局日志追踪 | `app/core/trace.py` | 每个请求分配 trace_id，写进 ContextVar，日志行、响应头 `X-Trace-Id`、错误体都带上它 |
+| 异常处理 | `app/core/errors.py` | `AppError` 体系（400/401/404/409/502/503）+ 校验错误 / 数据库错误 / 兜底，统一信封 |
+| 任务处理 | `app/tasks/manager.py` | asyncio 调度：并发上限、进度上报、取消、状态落库、重启恢复 |
+| ORM | `app/db/` | SQLAlchemy 2.0 + SQLite（WAL），`Base` / `TimestampMixin` / `get_db` / `session_scope` |
+
+接口（均返回 `{ok, item|items, error, code, traceId}` 信封）：
+
+```
+GET  /api/health            健康检查（主进程判定就绪）
+GET  /api/status            运行状态（Python 版本 / DB / 日志目录 / 任务类型）
+GET  /api/tasks/types       可用的任务类型
+POST /api/tasks             提交任务 {"name":"demo","payload":{...}}
+GET  /api/tasks?limit=20    任务列表
+GET  /api/tasks/{id}        任务详情
+POST /api/tasks/{id}/cancel 取消任务
+GET  /api/comfy/status       ComfyUI 连接状态
+GET  /api/comfy/jobs         工作流任务列表        POST /api/comfy/run  提交工作流
+GET  /api/comfy/jobs/{id}    工作流任务详情        POST /api/comfy/jobs/{id}/cancel
+GET  /api/comfy/output       取回生成结果          POST /api/comfy/upload
+/api/docs                   Swagger 文档
+```
+
+排查方式：错误响应里的 `traceId` 直接去 `<userData>/data/logs/backend.log` 搜，
+同一条请求的访问日志、异常堆栈、它触发的后台任务日志（沿用同一个 trace_id）会串在一起。
+
+细节（怎么加任务 / 加表 / 加接口）见 [runtime/backend/README.md](runtime/backend/README.md)。
 
 ## 常见改造点
 

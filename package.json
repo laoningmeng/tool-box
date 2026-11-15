@@ -16,6 +16,7 @@
     "dist": "electron-vite build && electron-builder --win --x64",
     "dist:dir": "electron-vite build && electron-builder --win --dir",
     "setup:python": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-python.ps1",
+    "setup:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-backend-deps.ps1",
     "app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-app.ps1",
     "app:debug": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-app.ps1 -DebugPort 9355",
     "smoke": "node scripts/smoke-test.mjs 9355 .tmp/screenshots"

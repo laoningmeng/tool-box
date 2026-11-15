@@ -24,6 +24,13 @@ runtime/python-*/
 models/
 .runtime/
 
+# Python 缓存与本地数据库
+__pycache__/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal
+
 # editor / os
 .vscode/*
 !.vscode/extensions.json

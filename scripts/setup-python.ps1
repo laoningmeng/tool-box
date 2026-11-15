@@ -3,7 +3,8 @@
 # 可选参数：-Series 3.11（默认）指定 Python 小版本线
 
 param(
-  [string]$Series = '3.11'
+  [string]$Series = '3.11',
+  [switch]$SkipDeps
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,6 +16,9 @@ $pythonExe = Join-Path $runtimeDir 'python.exe'
 if (Test-Path $pythonExe) {
   Write-Host "==> 已存在 Python 运行时：$pythonExe"
   & $pythonExe --version
+  if (-not $SkipDeps) {
+    & (Join-Path $PSScriptRoot 'install-backend-deps.ps1')
+  }
   exit 0
 }
 
@@ -98,4 +102,7 @@ Move-Item (Join-Path $extract 'python') $runtimeDir
 Remove-Item -Recurse -Force $extract, $archive -ErrorAction SilentlyContinue
 
 & $pythonExe --version
+if (-not $SkipDeps) {
+  & (Join-Path $PSScriptRoot 'install-backend-deps.ps1')
+}
 Write-Host '==> 完成。可执行 npm run app 启动应用（后端会使用该运行时）'
