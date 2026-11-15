@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import type {
   ViewerBone,
   ViewerClip,
@@ -75,6 +76,7 @@ let lastTick = 0
 let lastFrame = performance.now()
 
 const partObjects = new Map<string, THREE.Object3D>()
+const partByKey = new Map<string, THREE.Object3D>()
 const boneObjects = new Map<string, THREE.Bone>()
 let modelRadius = 1
 let selectionId = ''
@@ -158,15 +160,18 @@ function applyBackground(): void {
 function parseParts(root: THREE.Object3D): ViewerPart[] {
   const parts: ViewerPart[] = []
   partObjects.clear()
-  const push = (object: THREE.Object3D, depth: number): void => {
+  partByKey.clear()
+  const push = (object: THREE.Object3D, depth: number, key: string): void => {
     if (parts.length >= 800) return
     const type = renderableType(object)
     if (type) {
       const info = meshGeometryInfo(object)
       const id = object.uuid
       partObjects.set(id, object)
+      partByKey.set(key, object)
       parts.push({
         id,
+        key,
         name: object.name || `mesh_${parts.length}`,
         type,
         depth,
@@ -177,9 +182,9 @@ function parseParts(root: THREE.Object3D): ViewerPart[] {
       })
     }
     // 网格下面也可能挂着骨骼节点，继续往下走
-    for (const child of object.children) push(child, depth + 1)
+    object.children.forEach((child, index) => push(child, depth + 1, `${key}.${index}`))
   }
-  for (const child of root.children) push(child, 0)
+  root.children.forEach((child, index) => push(child, 0, String(index)))
   return parts
 }
 
@@ -480,6 +485,69 @@ function selectNode(id: string): void {
   if (bone) highlightBone(bone)
 }
 
+/** 按稳定 key 批量高亮（应用分组时用） */
+function highlightParts(keys: string[]): void {
+  selectionId = ''
+  clearSelectionVisual()
+  for (const key of keys) {
+    const object = partByKey.get(key)
+    if (object) highlightPart(object)
+  }
+}
+
+function setVisibleByKeys(keys: string[], visible: boolean): void {
+  for (const key of keys) {
+    const object = partByKey.get(key)
+    if (object) object.visible = visible
+  }
+}
+
+/**
+ * 把一组部件导出成 glb 字节。
+ * 部件很多是 SkinnedMesh，直接导出会带上外部骨骼引用；这里统一烘焙成静态网格
+ * （保留世界变换与材质贴图），导出的就是一个可单独使用的道具/部件模型。
+ */
+async function exportParts(keys: string[]): Promise<ArrayBuffer> {
+  const group = new THREE.Group()
+  group.name = 'part-group'
+  const seen = new Set<string>()
+
+  for (const key of keys) {
+    const source = partByKey.get(key)
+    if (!source || seen.has(source.uuid)) continue
+    seen.add(source.uuid)
+    const geometry = (source as THREE.Mesh).geometry as THREE.BufferGeometry | undefined
+    if (!geometry) continue
+
+    source.updateWorldMatrix(true, false)
+    const material = (source as THREE.Mesh).material as THREE.Material
+    const anySource = source as unknown as { isLine?: boolean; isPoints?: boolean }
+    const clone = anySource.isLine
+      ? new THREE.LineSegments(geometry, material)
+      : anySource.isPoints
+        ? new THREE.Points(geometry, material)
+        : new THREE.Mesh(geometry, material)
+    clone.name = source.name || `part_${key}`
+    source.matrixWorld.decompose(clone.position, clone.quaternion, clone.scale)
+    group.add(clone)
+  }
+
+  if (group.children.length === 0) throw new Error('没有可导出的部件')
+
+  const exporter = new GLTFExporter()
+  return new Promise<ArrayBuffer>((resolve, reject) => {
+    exporter.parse(
+      group,
+      (result) => {
+        if (result instanceof ArrayBuffer) resolve(result)
+        else reject(new Error('导出结果不是二进制 glb'))
+      },
+      (error) => reject(error instanceof Error ? error : new Error(String(error))),
+      { binary: true, onlyVisible: false }
+    )
+  })
+}
+
 /** 选中并把镜头推到该节点（双击 / 聚焦按钮触发） */
 function focusNode(id: string): void {
   if (!camera || !controls) return
@@ -706,7 +774,10 @@ defineExpose({
   resetView,
   screenshot,
   setPartVisible,
+  setVisibleByKeys,
   selectNode,
+  highlightParts,
+  exportParts,
   focusNode,
   playClip,
   pauseClip,

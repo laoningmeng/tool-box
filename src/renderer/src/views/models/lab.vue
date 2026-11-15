@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Camera,
+  Delete,
+  Download,
   FolderOpened,
   Grid,
   Hide,
@@ -16,7 +18,7 @@ import {
   View,
   Box
 } from '@element-plus/icons-vue'
-import type { ModelAsset } from '@shared/types'
+import type { ModelAsset, ModelPartGroup } from '@shared/types'
 import { MODEL_SOURCE_META } from '@shared/constants'
 import { useModelStore } from '@renderer/stores/models'
 import { formatBytes, formatDateTime } from '@renderer/utils/format'
@@ -71,6 +73,14 @@ const display = reactive({
 
 const hiddenParts = reactive(new Set<string>())
 const presetColors = ['#0b1220', '#141a24', '#1e293b', '#0f172a', '#f4f6fb', '#2b2140']
+
+/** 多选：Ctrl/⌘ 点选、Shift 连选，用于保存成分组导出 */
+const selectedKeys = ref<string[]>([])
+let lastClickedIndex = -1
+const savingGroup = ref(false)
+const exportingGroupId = ref('')
+
+const groups = computed(() => model.value?.groups ?? [])
 
 const meta = computed(() => (model.value ? MODEL_SOURCE_META[model.value.source] : null))
 const PART_TYPE_LABEL: Record<string, string> = {
@@ -143,6 +153,32 @@ function selectPart(id: string): void {
   viewer.value?.selectNode(id)
 }
 
+/** 单击选一个；Ctrl/⌘ 追加或取消；Shift 连选 */
+function onPartClick(part: { id: string; key: string }, index: number, event: MouseEvent): void {
+  const list = parts.value
+  if (event.shiftKey && lastClickedIndex >= 0) {
+    const start = Math.min(lastClickedIndex, index)
+    const end = Math.max(lastClickedIndex, index)
+    const range = list.slice(start, end + 1).map((item) => item.key)
+    selectedKeys.value = [...new Set([...selectedKeys.value, ...range])]
+  } else if (event.ctrlKey || event.metaKey) {
+    selectedKeys.value = selectedKeys.value.includes(part.key)
+      ? selectedKeys.value.filter((key) => key !== part.key)
+      : [...selectedKeys.value, part.key]
+  } else {
+    selectedKeys.value = [part.key]
+  }
+  lastClickedIndex = index
+
+  if (selectedKeys.value.length === 1) {
+    selectPart(part.id)
+  } else {
+    selectedId.value = ''
+    selectedKind.value = ''
+    viewer.value?.highlightParts(selectedKeys.value)
+  }
+}
+
 function selectBone(id: string): void {
   selectedId.value = id
   selectedKind.value = 'bone'
@@ -168,6 +204,110 @@ function showAllParts(): void {
     viewer.value?.setPartVisible(part.id, true)
   }
   ElMessage.success('已显示全部部件')
+}
+
+/* -------------------------------- 部件分组 -------------------------------- */
+
+async function reloadModel(): Promise<void> {
+  if (!model.value) return
+  const list = await window.api.model.list()
+  model.value = list.find((item) => item.id === model.value?.id) ?? model.value
+}
+
+async function handleSaveGroup(): Promise<void> {
+  if (!model.value || selectedKeys.value.length === 0) return
+  let name = ''
+  try {
+    const result = await ElMessageBox.prompt(
+      `将为选中的 ${selectedKeys.value.length} 个部件创建一个分组，导出时只包含这些部件。`,
+      '保存部件分组',
+      {
+        confirmButtonText: '保存',
+        cancelButtonText: '取消',
+        inputValue: `分组 ${groups.value.length + 1}`,
+        inputPattern: /\S+/,
+        inputErrorMessage: '请输入分组名称'
+      }
+    )
+    name = result.value
+  } catch {
+    return
+  }
+  savingGroup.value = true
+  try {
+    await window.api.model.saveGroup(model.value.id, name, [...selectedKeys.value])
+    await reloadModel()
+    ElMessage.success(`已保存分组「${name}」`)
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  } finally {
+    savingGroup.value = false
+  }
+}
+
+/** 应用分组：勾选这些部件、只显示它们，并高亮 */
+function applyGroup(group: ModelPartGroup): void {
+  selectedKeys.value = [...group.partKeys]
+  selectedId.value = ''
+  selectedKind.value = ''
+
+  const all = structure.value?.parts ?? []
+  const keep = new Set(group.partKeys)
+  for (const part of all) {
+    const visible = keep.has(part.key)
+    if (visible) hiddenParts.delete(part.id)
+    else hiddenParts.add(part.id)
+    viewer.value?.setPartVisible(part.id, visible)
+  }
+  viewer.value?.highlightParts([...group.partKeys])
+  ElMessage.success(`已应用「${group.name}」：只显示 ${group.partKeys.length} 个部件`)
+}
+
+async function exportGroup(group: ModelPartGroup): Promise<void> {
+  if (!model.value || exportingGroupId.value) return
+  exportingGroupId.value = group.id
+  try {
+    const bytes = await viewer.value?.exportParts(group.partKeys)
+    if (!bytes) throw new Error('没有可导出的部件（可能部件已不在当前模型中）')
+    const result = await window.api.model.exportGroup({
+      modelId: model.value.id,
+      name: group.name,
+      bytes: new Uint8Array(bytes)
+    })
+    if (result.canceled) return
+    if (!result.ok) {
+      ElMessage.error(result.message || '导出失败')
+      return
+    }
+    await reloadModel()
+    await store.refresh()
+    const kb = Math.round((result.bytes ?? 0) / 1024)
+    ElMessage.success(`已导出「${group.name}」(${kb} KB)，并登记到模型库`)
+  } catch (error) {
+    ElMessage.error(`导出失败：${(error as Error).message}`)
+  } finally {
+    exportingGroupId.value = ''
+  }
+}
+
+async function removeGroup(group: ModelPartGroup): Promise<void> {
+  if (!model.value) return
+  try {
+    await ElMessageBox.confirm(`删除分组「${group.name}」？不会删除任何模型文件。`, '删除分组', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+  try {
+    await window.api.model.removeGroup(model.value.id, group.id)
+    await reloadModel()
+    ElMessage.success('已删除分组')
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  }
 }
 
 function playClip(index: number): void {
@@ -295,12 +435,16 @@ async function reveal(): Promise<void> {
         <div class="tree">
           <template v-if="tab === 'parts'">
             <div
-              v-for="part in parts"
+              v-for="(part, index) in parts"
               :key="part.id"
               class="tree-row"
-              :class="{ 'is-active': selectedId === part.id, 'is-hidden': hiddenParts.has(part.id) }"
+              :class="{
+                'is-active': selectedId === part.id,
+                'is-checked': selectedKeys.includes(part.key),
+                'is-hidden': hiddenParts.has(part.id)
+              }"
               :style="{ paddingLeft: `${8 + part.depth * 12}px` }"
-              @click="selectPart(part.id)"
+              @click="onPartClick(part, index, $event)"
               @dblclick="viewer?.focusNode(part.id)"
             >
               <el-button
@@ -464,6 +608,53 @@ async function reveal(): Promise<void> {
             </button>
           </div>
           <p v-else class="block__empty">该模型没有内置动作</p>
+        </section>
+
+        <section class="block">
+          <h3 class="block__title">
+            分组 <span class="block__count">{{ groups.length }}</span>
+            <el-button
+              class="block__action"
+              link
+              type="primary"
+              size="small"
+              :loading="savingGroup"
+              :disabled="selectedKeys.length === 0"
+              @click="handleSaveGroup"
+            >
+              保存为分组
+            </el-button>
+          </h3>
+          <p class="block__hint">
+            已选 {{ selectedKeys.length }} 个部件<template v-if="selectedKeys.length">（可导出为独立 glb）</template>
+            · Ctrl / Shift 多选
+          </p>
+          <div v-if="groups.length" class="group-list">
+            <div v-for="group in groups" :key="group.id" class="group">
+              <div class="group__main">
+                <span class="group__name" :title="group.name">{{ group.name }}</span>
+                <span class="group__count num">{{ group.partKeys.length }} 件</span>
+              </div>
+              <div class="group__actions">
+                <el-tooltip content="应用：只显示这些部件" placement="top">
+                  <el-button link size="small" :icon="View" @click="applyGroup(group)" />
+                </el-tooltip>
+                <el-tooltip content="导出为 glb" placement="top">
+                  <el-button
+                    link
+                    size="small"
+                    :icon="Download"
+                    :loading="exportingGroupId === group.id"
+                    @click="exportGroup(group)"
+                  />
+                </el-tooltip>
+                <el-tooltip content="删除分组" placement="top">
+                  <el-button link size="small" type="danger" :icon="Delete" @click="removeGroup(group)" />
+                </el-tooltip>
+              </div>
+            </div>
+          </div>
+          <p v-else class="block__empty">在左侧选中部件后可保存为分组</p>
         </section>
 
         <section class="block">
@@ -642,6 +833,14 @@ async function reveal(): Promise<void> {
 .tree-row.is-active {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.tree-row.is-checked {
+  background: var(--accent-softer);
+}
+
+.tree-row.is-checked.is-active {
+  background: var(--accent-soft);
 }
 
 .tree-row.is-hidden {
@@ -827,6 +1026,58 @@ async function reveal(): Promise<void> {
   margin: 0;
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+.block__hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+.group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.group__main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.group__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.group__count {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  flex: none;
+}
+
+.group__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
 }
 
 .clip-list {

@@ -15,8 +15,10 @@ import type {
   ModelAsset,
   ModelConfigPatch,
   ModelConfigView,
+  ModelExportResult,
   ModelImportResult,
   ModelInput,
+  ModelPartGroup,
   ModelQuery,
   ModelSummary,
   PagedResult,
@@ -85,7 +87,17 @@ const api: BridgeApi = {
       ipcRenderer.invoke(IPC.model.update, id, input),
     remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.model.remove, id),
     readFile: (id: string): Promise<Uint8Array> => ipcRenderer.invoke(IPC.model.read, id),
-    reveal: (id: string): Promise<void> => ipcRenderer.invoke(IPC.model.reveal, id)
+    reveal: (id: string): Promise<void> => ipcRenderer.invoke(IPC.model.reveal, id),
+    saveGroup: (modelId: string, name: string, partKeys: string[]): Promise<ModelPartGroup> =>
+      ipcRenderer.invoke(IPC.model.saveGroup, modelId, name, partKeys),
+    removeGroup: (modelId: string, groupId: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(IPC.model.removeGroup, modelId, groupId),
+    exportGroup: (payload: {
+      modelId: string
+      name: string
+      bytes: Uint8Array
+      targetPath?: string
+    }): Promise<ModelExportResult> => ipcRenderer.invoke(IPC.model.exportGroup, payload)
   },
   modelConfig: {
     get: (): Promise<ModelConfigView> => ipcRenderer.invoke(IPC.modelConfig.get),

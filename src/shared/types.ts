@@ -250,6 +250,15 @@ export type ModelSource = 'tripo' | 'meshy' | 'blender' | 'unknown'
 
 export type ModelFormat = 'glb' | 'gltf' | 'fbx' | 'obj' | 'blend' | 'zip' | 'other'
 
+/** 部件分组：把若干部件打成一个可命名、可导出的组（如「双手持枪」） */
+export interface ModelPartGroup {
+  id: string
+  name: string
+  /** ModelViewer 给出的稳定结构路径（如 "0.3.12"），跨次加载不变 */
+  partKeys: string[]
+  createdAt: string
+}
+
 export interface ModelAsset {
   id: string
   name: string
@@ -262,6 +271,8 @@ export interface ModelAsset {
   size: number
   note: string
   tags: string[]
+  /** 在实验台里保存的部件分组 */
+  groups?: ModelPartGroup[]
   createdAt: string
   updatedAt: string
   /** 查询时实时计算（文件是否还在），不落库 */
@@ -331,6 +342,17 @@ export interface ModelConfigStored {
   autoDetectSource: boolean
 }
 
+export interface ModelExportResult {
+  ok: boolean
+  canceled?: boolean
+  /** 导出文件路径 */
+  path?: string
+  /** 导出后自动登记进模型库的新资产 */
+  asset?: ModelAsset
+  bytes?: number
+  message?: string
+}
+
 export interface ModelApi {
   list(query?: ModelQuery): Promise<ModelAsset[]>
   summary(): Promise<ModelSummary>
@@ -345,6 +367,19 @@ export interface ModelApi {
   readFile(id: string): Promise<Uint8Array>
   /** 在系统文件管理器中定位该模型 */
   reveal(id: string): Promise<void>
+  /** 保存部件分组 */
+  saveGroup(modelId: string, name: string, partKeys: string[]): Promise<ModelPartGroup>
+  removeGroup(modelId: string, groupId: string): Promise<{ ok: boolean }>
+  /**
+   * 导出一组部件为 glb 文件，并自动登记进模型库。
+   * 不传 targetPath 时弹保存对话框（自动化测试可直接给路径）。
+   */
+  exportGroup(payload: {
+    modelId: string
+    name: string
+    bytes: Uint8Array
+    targetPath?: string
+  }): Promise<ModelExportResult>
 }
 
 /** 密钥连通性检测结果 */

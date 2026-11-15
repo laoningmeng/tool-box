@@ -6,9 +6,11 @@ import type {
   ModelAsset,
   ModelConfigPatch,
   ModelConfigView,
+  ModelExportResult,
   ModelFormat,
   ModelImportResult,
   ModelInput,
+  ModelPartGroup,
   ModelQuery,
   ModelSource,
   ModelSummary,
@@ -217,6 +219,92 @@ export function readModelFile(id: string): Uint8Array {
   if (!fs.existsSync(target.path)) throw new Error('文件已被移动或删除')
   const buffer = fs.readFileSync(target.path)
   return new Uint8Array(buffer)
+}
+
+/* -------------------------------- 部件分组 -------------------------------- */
+
+function requireModel(modelId: string): ModelAsset {
+  const model = getDb().models.find((item) => item.id === modelId)
+  if (!model) throw new Error('模型不存在')
+  return model
+}
+
+export function saveModelGroup(modelId: string, name: string, partKeys: string[]): ModelPartGroup {
+  const model = requireModel(modelId)
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error('分组名称不能为空')
+  if (partKeys.length === 0) throw new Error('请先选择部件')
+  const group: ModelPartGroup = {
+    id: `grp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+    name: trimmed.slice(0, 40),
+    partKeys: [...new Set(partKeys)].slice(0, 500),
+    createdAt: now()
+  }
+  model.groups = [...(model.groups ?? []), group]
+  model.updatedAt = now()
+  persist()
+  log('info', '保存部件分组', `${model.name} / ${group.name} (${group.partKeys.length})`)
+  return group
+}
+
+export function removeModelGroup(modelId: string, groupId: string): { ok: boolean } {
+  const model = requireModel(modelId)
+  const before = model.groups?.length ?? 0
+  model.groups = (model.groups ?? []).filter((item) => item.id !== groupId)
+  model.updatedAt = now()
+  persist()
+  return { ok: (model.groups.length ?? 0) < before }
+}
+
+function safeFilePart(value: string): string {
+  return value.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'export'
+}
+
+export async function exportModelGroup(
+  win: BrowserWindow | null,
+  payload: { modelId: string; name: string; bytes: Uint8Array; targetPath?: string }
+): Promise<ModelExportResult> {
+  const model = requireModel(payload.modelId)
+  const bytes = payload.bytes
+  if (!bytes || bytes.length === 0) throw new Error('导出的模型没有数据')
+
+  let targetPath = payload.targetPath?.trim() ?? ''
+  if (!targetPath) {
+    const options: Electron.SaveDialogOptions = {
+      title: '导出分组模型',
+      buttonLabel: '导出',
+      defaultPath: path.join(
+        path.dirname(model.path),
+        `${safeFilePart(model.name)}_${safeFilePart(payload.name)}.glb`
+      ),
+      filters: [{ name: 'glTF 二进制', extensions: ['glb'] }]
+    }
+    const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+    targetPath = result.filePath
+  }
+
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true })
+  fs.writeFileSync(targetPath, Buffer.from(bytes))
+
+  const stat = fs.statSync(targetPath)
+  const stamp = now()
+  const asset: ModelAsset = {
+    id: `mdl_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    name: path.basename(targetPath, path.extname(targetPath)),
+    source: model.source,
+    format: 'glb',
+    path: path.resolve(targetPath),
+    size: stat.size,
+    note: `由「${model.name}」的部件分组「${payload.name}」导出`,
+    tags: ['分组导出'],
+    createdAt: stamp,
+    updatedAt: stamp
+  }
+  getDb().models.unshift(asset)
+  persist()
+  log('info', '导出部件分组', `${payload.name} -> ${targetPath} (${Math.round(stat.size / 1024)} KB)`)
+  return { ok: true, path: targetPath, asset, bytes: stat.size }
 }
 
 /* ------------------------------ 配置与密钥 ------------------------------ */

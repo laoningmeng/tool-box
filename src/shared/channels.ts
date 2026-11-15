@@ -39,7 +39,10 @@ export const IPC = {
     update: 'model:update',
     remove: 'model:remove',
     reveal: 'model:reveal',
-    read: 'model:read'
+    read: 'model:read',
+    saveGroup: 'model:save-group',
+    removeGroup: 'model:remove-group',
+    exportGroup: 'model:export-group'
   },
   modelConfig: {
     get: 'model-config:get',

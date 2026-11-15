@@ -2,8 +2,10 @@
 
 export interface ViewerPart {
   id: string
+  /** 稳定的结构路径（如 0.3.12），跨次加载不变，用于持久化分组 */
+  key: string
   name: string
-  /** mesh | skinned | group */
+  /** skinned | mesh | lines | points */
   type: string
   depth: number
   triangles: number
