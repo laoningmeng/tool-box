@@ -12,6 +12,8 @@ import {
   Delete,
   Download,
   EditPen,
+  Expand,
+  Fold,
   FolderOpened,
   FullScreen,
   Grid,
@@ -32,6 +34,7 @@ import { useModelStore } from '@renderer/stores/models'
 import { useAppStore } from '@renderer/stores/app'
 import { formatBytes, formatDateTime } from '@renderer/utils/format'
 import ModelViewer from '@renderer/components/ModelViewer.vue'
+import PanelSection from '@renderer/components/PanelSection.vue'
 import type { ClipEditState, QuickPoseAction, SemanticSummary, ViewerStructure } from '@renderer/components/model-viewer-types'
 import { ACTION_LIBRARY } from '@renderer/rig/actions'
 import type { ActionKind } from '@renderer/rig/types'
@@ -132,6 +135,24 @@ function redoEdit(): void {
     return
   }
   ElMessage.success(`已恢复：${result.label ?? ''}`)
+}
+
+/* ------------------------------ 检查器分区折叠 ------------------------------ */
+const SECTION_KEYS = ['inspect', 'bone-edit', 'quick-pose', 'clip-edit', 'clips', 'bound', 'library', 'groups']
+const layoutVersion = ref(0)
+
+/** 一键展开/收起所有分区：改 localStorage 后重建各分区让它们重新读初始值 */
+function setAllSections(open: boolean): void {
+  for (const key of SECTION_KEYS) {
+    localStorage.setItem('lab:section:' + key, open ? '1' : '0')
+  }
+  layoutVersion.value += 1
+}
+
+/** 关键帧条上的百分比位置 */
+function keyPercent(time: number): string {
+  const duration = Math.max(editState.value?.duration ?? 1, 0.001)
+  return Math.min(100, Math.max(0, (time / duration) * 100)) + '%'
 }
 
 /** 快捷姿态：每次点击转 12° */
@@ -1051,222 +1072,34 @@ async function reveal(): Promise<void> {
 
       <!-- 右：动作 + 信息 -->
       <aside class="lab__panel lab__inspector">
-        <section class="block">
-          <h3 class="block__title">动作 <span class="block__count">{{ clips.length }}</span></h3>
-          <div v-if="clips.length" class="clip-list">
-            <div v-for="clip in clips" :key="clip.index" class="clip-row">
-              <button
-                type="button"
-                class="clip"
-                :class="{ 'is-active': !libraryKind && clipIndex === clip.index }"
-                @click="playClip(clip.index)"
-              >
-                <el-icon class="clip__icon"><VideoPlay /></el-icon>
-                <span class="clip__name" :title="clip.name">{{ clip.name }}</span>
-                <span class="clip__time num">{{ clip.duration.toFixed(2) }}s</span>
-              </button>
-              <el-tooltip content="精修这段动作" placement="left">
-                <el-button
-                  class="clip-row__btn"
-                  size="small"
-                  type="primary"
-                  plain
-                  :icon="EditPen"
-                  @click.stop="startEditNative(clip.index)"
-                />
-              </el-tooltip>
-            </div>
-          </div>
-          <p v-else class="block__empty">该模型没有内置动作</p>
-          <div v-if="libraryKind && !editing" class="edit-entry">
-            <span class="edit-entry__label">
-              当前：{{ libraryDefs.find((item) => item.kind === libraryKind)?.label ?? libraryKind }}
-            </span>
-            <el-button size="small" type="primary" plain :icon="EditPen" @click="startEditLibrary">
-              精修这段
-            </el-button>
-          </div>
-        </section>
+        <div class="inspector-tools">
+          <span class="inspector-tools__hint">检查器</span>
+          <el-tooltip content="展开全部" placement="bottom">
+            <el-button size="small" :icon="Expand" @click="setAllSections(true)" />
+          </el-tooltip>
+          <el-tooltip content="收起全部" placement="bottom">
+            <el-button size="small" :icon="Fold" @click="setAllSections(false)" />
+          </el-tooltip>
+        </div>
 
-        <section v-if="editing" class="block block--edit">
-          <h3 class="block__title">
-            精修 <span class="block__count">{{ editState?.name }}</span>
-            <el-button
-              class="block__action"
-              type="primary"
-              size="small"
-              :loading="savingAction"
-              @click="saveEdit"
-            >
-              保存并绑定
-            </el-button>
-          </h3>
-
-          <div class="edit-timeline">
-            <el-button-group size="small">
-              <el-button :icon="RefreshLeft" @click="viewer?.seekEdit(0)" />
-              <el-button :icon="ArrowLeft" @click="stepFrame(-1)" />
-              <el-button :icon="editState?.playing ? VideoPause : VideoPlay" @click="togglePlay" />
-              <el-button :icon="ArrowRight" @click="stepFrame(1)" />
-            </el-button-group>
-            <span class="edit-time num">
-              {{ editFrame.current }} / {{ editFrame.total }} 帧
-            </span>
-          </div>
-
-          <div class="key-strip">
-            <span
-              v-for="time in editState?.boneKeys ?? []"
-              :key="time"
-              class="key-mark"
-              :class="{ 'is-current': Math.abs(time - (editState?.time ?? 0)) < 0.5 / editFrame.fps }"
-              :style="{ left: `${Math.min(100, (time / Math.max(editState?.duration ?? 1, 0.001)) * 100)}%` }"
-            />
-            <span
-              class="key-playhead"
-              :style="{ left: `${Math.min(100, ((editState?.time ?? 0) / Math.max(editState?.duration ?? 1, 0.001)) * 100)}%` }"
-            />
-          </div>
-
-          <div class="edit-buttons">
-            <el-button size="small" type="primary" plain @click="recordKey">记关键帧 K</el-button>
-            <el-button size="small" @click="recordAll">记整帧</el-button>
-            <el-button size="small" @click="removeKey">删关键帧</el-button>
-          </div>
-
-          <p class="block__hint">
-            共 {{ editState?.keyCount ?? 0 }} 个关键帧 · 选中骨骼 {{ editState?.boneKeys.length ?? 0 }} 个 ·
-            ← / → 逐帧，K 记帧
-          </p>
-          <el-button size="small" class="edit-cancel" @click="cancelEdit">放弃精修</el-button>
-        </section>
-
-        <section v-if="actions.length" class="block">
-          <h3 class="block__title">
-            已绑定动作 <span class="block__count">{{ actions.length }}</span>
-          </h3>
-          <div class="clip-list">
-            <div v-for="action in actions" :key="action.id" class="clip-row">
-              <button type="button" class="clip" @click="playSaved(action)">
-                <el-icon class="clip__icon"><VideoPlay /></el-icon>
-                <span class="clip__name" :title="action.name">{{ action.name }}</span>
-                <span class="clip__time num">{{ action.duration.toFixed(2) }}s</span>
-              </button>
-              <el-tooltip content="精修" placement="left">
-                <el-button
-                  class="clip-row__btn"
-                  size="small"
-                  type="primary"
-                  plain
-                  :icon="EditPen"
-                  @click.stop="startEditSaved(action)"
-                />
-              </el-tooltip>
-              <el-tooltip content="删除" placement="left">
-                <el-button
-                  class="clip-row__btn"
-                  size="small"
-                  :icon="Delete"
-                  @click.stop="removeSaved(action)"
-                />
-              </el-tooltip>
-            </div>
-          </div>
-        </section>
-
-        <section class="block">
-          <h3 class="block__title">
-            动作库 <span class="block__count">{{ libraryDefs.length }}</span>
-          </h3>
-          <p v-if="semantics && !semantics.available" class="block__hint">
-            {{ semantics.warnings[0] || '该模型没有可用骨骼，动作库不可用' }}
-          </p>
-          <p v-else-if="!semantics" class="block__hint">正在识别骨骼语义…</p>
-          <template v-else>
-            <p class="block__hint">
-              按骨骼语义现场生成，不需要模型自带动作
-              <template v-if="semantics.missing.length">
-                · 缺：{{ semantics.missing.slice(0, 4).map(shortRole).join('、') }}<template v-if="semantics.missing.length > 4">…</template>
-              </template>
-            </p>
-            <div class="library-grid">
-              <button
-                v-for="def in libraryDefs"
-                :key="def.kind"
-                type="button"
-                class="clip clip--lib"
-                :class="{ 'is-active': libraryKind === def.kind }"
-                :title="def.description"
-                @click="playLibrary(def.kind)"
-              >
-                <span class="clip__name">{{ def.label }}</span>
-                <span class="clip__time num">{{ def.defaultDuration }}s</span>
-              </button>
-            </div>
-          </template>
-        </section>
-
-        <section v-if="tab === 'parts' || groups.length > 0" class="block">
-          <h3 class="block__title">
-            分组 <span class="block__count">{{ groups.length }}</span>
-            <el-button
-              class="block__action"
-              type="primary"
-              size="small"
-              :loading="savingGroup"
-              :disabled="selectedKeys.length === 0"
-              @click="handleSaveGroup"
-            >
-              保存为分组
-            </el-button>
-          </h3>
-          <p class="block__hint">
-            已选 {{ selectedKeys.length }} 个部件<template v-if="selectedKeys.length">（可导出为独立 glb）</template>
-            · Ctrl / Shift 多选
-          </p>
-          <div v-if="groups.length" class="group-list">
-            <div v-for="group in groups" :key="group.id" class="group">
-              <div class="group__main">
-                <span class="group__name" :title="group.name">{{ group.name }}</span>
-                <span class="group__count num">{{ group.partKeys.length }} 件</span>
-              </div>
-              <div class="group__actions">
-                <el-tooltip content="应用：只显示这些部件" placement="top">
-                  <el-button link size="small" :icon="View" @click="applyGroup(group)" />
-                </el-tooltip>
-                <el-tooltip content="导出为 glb" placement="top">
-                  <el-button
-                    link
-                    size="small"
-                    :icon="Download"
-                    :loading="exportingGroupId === group.id"
-                    @click="exportGroup(group)"
-                  />
-                </el-tooltip>
-                <el-tooltip content="删除分组" placement="top">
-                  <el-button link size="small" type="danger" :icon="Delete" @click="removeGroup(group)" />
-                </el-tooltip>
-              </div>
-            </div>
-          </div>
-          <p v-else class="block__empty">在左侧选中部件后可保存为分组</p>
-        </section>
-
-        <section class="block">
-          <h3 class="block__title">
-            选中
+        <PanelSection
+          title="选中"
+          storage-key="inspect"
+          :default-open="true"
+          :key="'inspect-' + layoutVersion"
+        >
+          <template #actions>
             <el-button
               v-if="selectedId"
               type="primary"
               plain
               size="small"
-              class="block__action"
               :icon="Aim"
               @click="focusSelected"
             >
               聚焦
             </el-button>
-          </h3>
+          </template>
           <div v-if="selectedPart" class="info">
             <div class="info__row">
               <span>类型</span>
@@ -1335,10 +1168,82 @@ async function reveal(): Promise<void> {
               <span class="num text-muted">{{ formatDateTime(model?.updatedAt, true) }}</span>
             </div>
           </div>
-        </section>
+        </PanelSection>
 
-        <section v-if="structure?.bones.length" class="block">
-          <h3 class="block__title">快捷姿态</h3>
+        <PanelSection
+          v-if="selectedBoneId"
+          title="编辑骨骼"
+          storage-key="bone-edit"
+          :default-open="true"
+          :key="'bone-edit-' + layoutVersion"
+        >
+          <template #actions>
+            <el-tooltip content="撤销 (Ctrl+Z)" placement="top">
+              <el-button
+                class="is-icon-only"
+                size="small"
+                :icon="RefreshLeft"
+                :disabled="historyState.undo === 0"
+                @click="undoEdit"
+              />
+            </el-tooltip>
+            <el-tooltip content="恢复 (Ctrl+Y)" placement="top">
+              <el-button
+                class="is-icon-only"
+                size="small"
+                :icon="RefreshRight"
+                :disabled="historyState.redo === 0"
+                @click="redoEdit"
+              />
+            </el-tooltip>
+          </template>
+          <el-radio-group v-model="gizmoMode" size="small" class="edit-modes">
+            <el-radio-button value="rotate">旋转</el-radio-button>
+            <el-radio-button value="translate">移动</el-radio-button>
+            <el-radio-button value="off">关闭</el-radio-button>
+          </el-radio-group>
+
+          <div class="edit-vec">
+            <span class="edit-vec__label">位置</span>
+            <el-input
+              v-for="axis in POSITION_AXES"
+              :key="'p-' + axis"
+              :model-value="fmtVec(boneTransform?.position, axis, 3)"
+              size="small"
+              class="edit-vec__input"
+              @change="(value: string) => onPositionChange(axis, value)"
+              @keyup.enter="commitOnEnter"
+            />
+          </div>
+
+          <div class="edit-vec">
+            <span class="edit-vec__label">旋转°</span>
+            <el-input
+              v-for="axis in POSITION_AXES"
+              :key="'r-' + axis"
+              :model-value="fmtVec(boneTransform?.rotation, axis, 2)"
+              size="small"
+              class="edit-vec__input"
+              @change="(value: string) => onRotationChange(axis, value)"
+              @keyup.enter="commitOnEnter"
+            />
+          </div>
+
+          <div class="edit-actions">
+            <el-button size="small" @click="resetSelectedBone">复位该骨骼</el-button>
+            <el-button size="small" @click="resetAllPose">复位全部姿态</el-button>
+          </div>
+          <p class="block__hint">拖动手柄或直接改数值；编辑时会暂停当前动作</p>
+        </PanelSection>
+
+        <PanelSection
+          v-if="structure?.bones.length"
+          title="快捷姿态"
+          :count="QUICK_POSES.length + 1"
+          storage-key="quick-pose"
+          :default-open="true"
+          :key="'quick-pose-' + layoutVersion"
+        >
           <div class="quick-grid">
             <el-button
               v-for="item in QUICK_POSES"
@@ -1353,68 +1258,220 @@ async function reveal(): Promise<void> {
             </el-button>
           </div>
           <p class="block__hint">每次点击 ±12°，可反复点击叠加；Ctrl+Z 可撤销</p>
-        </section>
+        </PanelSection>
 
-        <section v-if="selectedBoneId" class="block">
-          <h3 class="block__title">
-            编辑骨骼
-            <span class="block__actions">
-              <el-tooltip content="撤销 (Ctrl+Z)" placement="top">
+        <PanelSection
+          v-if="editing"
+          tone="accent"
+          title="精修"
+          :count="editState?.name"
+          storage-key="clip-edit"
+          :default-open="true"
+          :key="'clip-edit-' + layoutVersion"
+        >
+          <template #actions>
+            <el-button type="primary" size="small" :loading="savingAction" @click="saveEdit">
+              保存并绑定
+            </el-button>
+          </template>
+          <div class="edit-timeline">
+            <el-button-group size="small">
+              <el-button :icon="RefreshLeft" @click="viewer?.seekEdit(0)" />
+              <el-button :icon="ArrowLeft" @click="stepFrame(-1)" />
+              <el-button :icon="editState?.playing ? VideoPause : VideoPlay" @click="togglePlay" />
+              <el-button :icon="ArrowRight" @click="stepFrame(1)" />
+            </el-button-group>
+            <span class="edit-time num">{{ editFrame.current }} / {{ editFrame.total }} 帧</span>
+          </div>
+
+          <div class="key-strip">
+            <span
+              v-for="time in editState?.boneKeys ?? []"
+              :key="time"
+              class="key-mark"
+              :class="{ 'is-current': Math.abs(time - (editState?.time ?? 0)) < 0.5 / editFrame.fps }"
+              :style="{ left: keyPercent(time) }"
+            />
+            <span class="key-playhead" :style="{ left: keyPercent(editState?.time ?? 0) }" />
+          </div>
+
+          <div class="edit-buttons">
+            <el-button size="small" type="primary" plain @click="recordKey">记关键帧 K</el-button>
+            <el-button size="small" @click="recordAll">记整帧</el-button>
+            <el-button size="small" @click="removeKey">删关键帧</el-button>
+          </div>
+
+          <p class="block__hint">
+            共 {{ editState?.keyCount ?? 0 }} 个关键帧 · 选中骨骼 {{ editState?.boneKeys.length ?? 0 }} 个 ·
+            ← / → 逐帧，K 记帧
+          </p>
+          <el-button size="small" class="edit-cancel" @click="cancelEdit">放弃精修</el-button>
+        </PanelSection>
+
+        <PanelSection
+          title="动作"
+          :count="clips.length"
+          storage-key="clips"
+          :default-open="true"
+          :key="'clips-' + layoutVersion"
+        >
+          <div v-if="clips.length" class="clip-list">
+            <div v-for="clip in clips" :key="clip.index" class="clip-row">
+              <button
+                type="button"
+                class="clip"
+                :class="{ 'is-active': !libraryKind && clipIndex === clip.index }"
+                @click="playClip(clip.index)"
+              >
+                <el-icon class="clip__icon"><VideoPlay /></el-icon>
+                <span class="clip__name" :title="clip.name">{{ clip.name }}</span>
+                <span class="clip__time num">{{ clip.duration.toFixed(2) }}s</span>
+              </button>
+              <el-tooltip content="精修这段动作" placement="left">
                 <el-button
+                  class="clip-row__btn"
                   size="small"
-                  :icon="RefreshLeft"
-                  :disabled="historyState.undo === 0"
-                  @click="undoEdit"
+                  type="primary"
+                  plain
+                  :icon="EditPen"
+                  @click.stop="startEditNative(clip.index)"
                 />
               </el-tooltip>
-              <el-tooltip content="恢复 (Ctrl+Y)" placement="top">
-                <el-button
-                  size="small"
-                  :icon="RefreshRight"
-                  :disabled="historyState.redo === 0"
-                  @click="redoEdit"
-                />
-              </el-tooltip>
+            </div>
+          </div>
+          <p v-else class="block__empty">该模型没有内置动作</p>
+          <div v-if="libraryKind && !editing" class="edit-entry">
+            <span class="edit-entry__label">
+              当前：{{ libraryDefs.find((item) => item.kind === libraryKind)?.label ?? libraryKind }}
             </span>
-          </h3>
-          <el-radio-group v-model="gizmoMode" size="small" class="edit-modes">
-            <el-radio-button value="rotate">旋转</el-radio-button>
-            <el-radio-button value="translate">移动</el-radio-button>
-            <el-radio-button value="off">关闭</el-radio-button>
-          </el-radio-group>
+            <el-button size="small" type="primary" plain :icon="EditPen" @click="startEditLibrary">
+              精修这段
+            </el-button>
+          </div>
+        </PanelSection>
 
-          <div class="edit-vec">
-            <span class="edit-vec__label">位置</span>
-            <el-input
-              v-for="axis in POSITION_AXES"
-              :key="`p-${axis}`"
-              :model-value="fmtVec(boneTransform?.position, axis, 3)"
+        <PanelSection
+          v-if="actions.length"
+          title="已绑定动作"
+          :count="actions.length"
+          storage-key="bound"
+          :default-open="true"
+          :key="'bound-' + layoutVersion"
+        >
+          <div class="clip-list">
+            <div v-for="action in actions" :key="action.id" class="clip-row">
+              <button type="button" class="clip" @click="playSaved(action)">
+                <el-icon class="clip__icon"><VideoPlay /></el-icon>
+                <span class="clip__name" :title="action.name">{{ action.name }}</span>
+                <span class="clip__time num">{{ action.duration.toFixed(2) }}s</span>
+              </button>
+              <el-tooltip content="精修" placement="left">
+                <el-button
+                  class="clip-row__btn"
+                  size="small"
+                  type="primary"
+                  plain
+                  :icon="EditPen"
+                  @click.stop="startEditSaved(action)"
+                />
+              </el-tooltip>
+              <el-tooltip content="删除" placement="left">
+                <el-button
+                  class="clip-row__btn"
+                  size="small"
+                  :icon="Delete"
+                  @click.stop="removeSaved(action)"
+                />
+              </el-tooltip>
+            </div>
+          </div>
+        </PanelSection>
+
+        <PanelSection
+          title="动作库"
+          :count="libraryDefs.length"
+          storage-key="library"
+          :default-open="false"
+          :key="'library-' + layoutVersion"
+        >
+          <p v-if="semantics && !semantics.available" class="block__hint">
+            {{ semantics.warnings[0] || '该模型没有可用骨骼，动作库不可用' }}
+          </p>
+          <p v-else-if="!semantics" class="block__hint">正在识别骨骼语义…</p>
+          <template v-else>
+            <p class="block__hint">
+              按骨骼语义现场生成，不需要模型自带动作
+              <template v-if="semantics.missing.length">
+                · 缺：{{ semantics.missing.slice(0, 4).map(shortRole).join('、') }}<template v-if="semantics.missing.length > 4">…</template>
+              </template>
+            </p>
+            <div class="library-grid">
+              <button
+                v-for="def in libraryDefs"
+                :key="def.kind"
+                type="button"
+                class="clip clip--lib"
+                :class="{ 'is-active': libraryKind === def.kind }"
+                :title="def.description"
+                @click="playLibrary(def.kind)"
+              >
+                <span class="clip__name">{{ def.label }}</span>
+                <span class="clip__time num">{{ def.defaultDuration }}s</span>
+              </button>
+            </div>
+          </template>
+        </PanelSection>
+
+        <PanelSection
+          v-if="tab === 'parts' || groups.length > 0"
+          title="分组"
+          :count="groups.length"
+          storage-key="groups"
+          :default-open="true"
+          :key="'groups-' + layoutVersion"
+        >
+          <template #actions>
+            <el-button
+              type="primary"
               size="small"
-              class="edit-vec__input"
-              @change="(value: string) => onPositionChange(axis, value)"
-              @keyup.enter="commitOnEnter"
-            />
+              :loading="savingGroup"
+              :disabled="selectedKeys.length === 0"
+              @click="handleSaveGroup"
+            >
+              保存为分组
+            </el-button>
+          </template>
+          <p class="block__hint">
+            已选 {{ selectedKeys.length }} 个部件<template v-if="selectedKeys.length">（可导出为独立 glb）</template>
+            · Ctrl / Shift 多选
+          </p>
+          <div v-if="groups.length" class="group-list">
+            <div v-for="group in groups" :key="group.id" class="group">
+              <div class="group__main">
+                <span class="group__name" :title="group.name">{{ group.name }}</span>
+                <span class="group__count num">{{ group.partKeys.length }} 件</span>
+              </div>
+              <div class="group__actions">
+                <el-tooltip content="应用：只显示这些部件" placement="top">
+                  <el-button link size="small" :icon="View" @click="applyGroup(group)" />
+                </el-tooltip>
+                <el-tooltip content="导出为 glb" placement="top">
+                  <el-button
+                    link
+                    size="small"
+                    :icon="Download"
+                    :loading="exportingGroupId === group.id"
+                    @click="exportGroup(group)"
+                  />
+                </el-tooltip>
+                <el-tooltip content="删除分组" placement="top">
+                  <el-button link size="small" type="danger" :icon="Delete" @click="removeGroup(group)" />
+                </el-tooltip>
+              </div>
+            </div>
           </div>
-
-          <div class="edit-vec">
-            <span class="edit-vec__label">旋转°</span>
-            <el-input
-              v-for="axis in POSITION_AXES"
-              :key="`r-${axis}`"
-              :model-value="fmtVec(boneTransform?.rotation, axis, 2)"
-              size="small"
-              class="edit-vec__input"
-              @change="(value: string) => onRotationChange(axis, value)"
-              @keyup.enter="commitOnEnter"
-            />
-          </div>
-
-          <div class="edit-actions">
-            <el-button size="small" @click="resetSelectedBone">复位该骨骼</el-button>
-            <el-button size="small" @click="resetAllPose">复位全部姿态</el-button>
-          </div>
-          <p class="block__hint">拖动手柄或直接改数值；编辑时会暂停当前动作</p>
-        </section>
+          <p v-else class="block__empty">在左侧选中部件后可保存为分组</p>
+        </PanelSection>
 
         <p class="lab__path mono" :title="model?.path">{{ model?.path }}</p>
       </aside>
@@ -1827,9 +1884,31 @@ async function reveal(): Promise<void> {
 
 /* ---------- 右：检查器 ---------- */
 .lab__inspector {
-  padding: 12px;
-  gap: 16px;
+  padding: 10px;
+  gap: 8px;
   overflow-y: auto;
+}
+
+.inspector-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 0 2px;
+}
+
+.inspector-tools__hint {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.06em;
+}
+
+.inspector-tools :deep(.el-button) {
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  margin-left: 0;
 }
 
 .block {
