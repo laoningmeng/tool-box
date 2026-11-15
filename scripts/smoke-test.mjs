@@ -87,6 +87,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const checks = []
 const record = (name, pass, detail) => checks.push({ name, pass: Boolean(pass), detail })
 
+/** 轮询某个表达式直到满足条件（懒加载页面 / 后端探测都需要时间） */
+async function pollUntil(expression, predicate, timeout = 10000, interval = 400) {
+  const start = Date.now()
+  let value
+  while (Date.now() - start < timeout) {
+    value = await evaluate(expression)
+    if (predicate(value)) return value
+    await sleep(interval)
+  }
+  return value
+}
+
 await send('Page.enable')
 await send('Runtime.enable')
 // 从无 hash 的入口重新加载，才能验证「默认路由 = 工作台」
@@ -100,9 +112,15 @@ const navTitles = await evaluate('[...document.querySelectorAll(".nav-item__titl
 record('侧栏 4 个一级入口且名称正确', JSON.stringify(navTitles) === JSON.stringify(['工作台', '资源管理', '工作流管理', '系统设置']), navTitles)
 const subNav = await evaluate('[...document.querySelectorAll(".nav-sub__title")].map(e => e.textContent.trim())')
 record('工作流二级菜单存在', subNav.length >= 2, subNav)
-const statText = await evaluate('[...document.querySelectorAll(".stat-card")].map(e => e.innerText.replace(/\\s+/g, " ").trim())')
-record('工作台 4 张统计卡有数据', statText.length === 4 && statText[0].includes('3'), statText)
-const dashRows = await evaluate('document.querySelectorAll(".dash-table .el-table__body tbody tr").length')
+const statText = await pollUntil(
+  '[...document.querySelectorAll(".stat-card")].map(e => e.innerText.replace(/\\s+/g, " ").trim())',
+  (list) => Array.isArray(list) && list.length === 4
+)
+record('工作台 4 张统计卡有数据', Array.isArray(statText) && statText.length === 4 && statText[0].includes('3'), statText)
+const dashRows = await pollUntil(
+  'document.querySelectorAll(".dash-table .el-table__body tbody tr").length',
+  (n) => n >= 3
+)
 record('最近资源表格 3 行', dashRows === 3, `${dashRows} 行`)
 const dashStatus = await evaluate('document.querySelector(".dash-table .el-table__body tbody tr .el-tag")?.textContent?.trim() ?? null')
 record('状态列已本地化', ['运行中', '已暂停', '草稿'].includes(dashStatus), dashStatus)
@@ -110,8 +128,11 @@ await shot('01-dashboard')
 
 /* ------------------------------- 资源管理 ------------------------------- */
 await evaluate('location.hash = "#/resources"')
-await sleep(1200)
-const resRows = await evaluate('document.querySelectorAll(".resource-table .el-table__body tbody tr").length')
+await sleep(1000)
+const resRows = await pollUntil(
+  'document.querySelectorAll(".resource-table .el-table__body tbody tr").length',
+  (n) => n >= 3
+)
 record('资源列表 3 条示例数据', resRows === 3, `${resRows} 行`)
 record(
   '页面标题切换为资源管理',
@@ -149,8 +170,11 @@ record(
 
 /* -------------------------------- 工作流 -------------------------------- */
 await evaluate('location.hash = "#/workflow"')
-await sleep(3500)
-const wfRows = await evaluate('document.querySelectorAll(".el-table__body tbody tr").length')
+await sleep(1500)
+const wfRows = await pollUntil(
+  'document.querySelectorAll(".el-table__body tbody tr").length',
+  (n) => n >= 1
+)
 record('内置流程 1 个', wfRows === 1, `${wfRows} 行`)
 const comfy = await evaluate(`(async () => {
   const s = await window.api.comfy.status()
@@ -159,8 +183,11 @@ const comfy = await evaluate(`(async () => {
 })()`)
 record('ComfyUI 未启动时不崩、给出可读错误', comfy.connected === false && Boolean(comfy.error), comfy)
 record('流程列表读取成功', comfy.workflows === 1, comfy.first)
-const banner = await evaluate('document.querySelector(".status-bar")?.innerText?.replace(/\\s+/g, " ").trim() ?? ""')
-record('工作流页显示未连接横幅', banner.includes('未连接'), banner)
+const banner = await pollUntil(
+  'document.querySelector(".status-bar")?.innerText?.replace(/\\s+/g, " ").trim() ?? ""',
+  (text) => typeof text === 'string' && (text.includes('未连接') || text.includes('已连接'))
+)
+record('工作流页显示连接状态横幅', typeof banner === 'string' && (banner.includes('未连接') || banner.includes('已连接')), banner)
 await shot('03-workflow')
 
 /* ------------------------- 系统设置 / 外观 / 深色 ------------------------- */
