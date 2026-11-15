@@ -158,6 +158,63 @@ const selectedBone = computed(() =>
     : null
 )
 
+/* -------------------------- 骨骼编辑（gizmo + 数值） -------------------------- */
+const gizmoMode = ref<'rotate' | 'translate' | 'off'>('rotate')
+const boneTransform = ref<{
+  position: { x: number; y: number; z: number }
+  rotation: { x: number; y: number; z: number }
+} | null>(null)
+
+const selectedBoneId = computed(() => (selectedKind.value === 'bone' ? selectedId.value : ''))
+
+function handleBoneTransform(payload: {
+  id: string
+  position: { x: number; y: number; z: number }
+  rotation: { x: number; y: number; z: number }
+}): void {
+  if (payload.id !== selectedId.value) return
+  boneTransform.value = { position: payload.position, rotation: payload.rotation }
+}
+
+const POSITION_AXES = ['x', 'y', 'z'] as const
+
+/** 数值框只负责展示；用户改完（回车/失焦）才写回骨骼 */
+function fmtVec(
+  vec: { x: number; y: number; z: number } | undefined,
+  axis: 'x' | 'y' | 'z',
+  digits: number
+): string {
+  const value = vec ? vec[axis] : 0
+  return (Number.isFinite(value) ? value : 0).toFixed(digits)
+}
+
+function commitOnEnter(event: KeyboardEvent): void {
+  ;(event.target as HTMLInputElement | null)?.blur()
+}
+
+function onPositionChange(axis: 'x' | 'y' | 'z', value: string): void {
+  const num = Number(value)
+  if (!selectedBoneId.value || !Number.isFinite(num)) return
+  viewer.value?.setBoneTransform(selectedBoneId.value, { position: { [axis]: num } })
+}
+
+function onRotationChange(axis: 'x' | 'y' | 'z', value: string): void {
+  const num = Number(value)
+  if (!selectedBoneId.value || !Number.isFinite(num)) return
+  viewer.value?.setBoneTransform(selectedBoneId.value, { rotation: { [axis]: num } })
+}
+
+function resetSelectedBone(): void {
+  if (!selectedBoneId.value) return
+  viewer.value?.resetBone(selectedBoneId.value)
+  ElMessage.success('该骨骼已复位')
+}
+
+function resetAllPose(): void {
+  viewer.value?.resetPose()
+  ElMessage.success('已复位全部骨骼')
+}
+
 onMounted(async () => {
   const id = String(route.params.id ?? '')
   loading.value = true
@@ -664,9 +721,11 @@ async function reveal(): Promise<void> {
             :exposure="display.exposure"
             :highlight-color="highlight.color"
             :highlight-intensity="highlight.intensity"
+            :gizmo-mode="gizmoMode"
             @parsed="handleParsed"
             @semantics="handleSemantics"
             @tick="handleTick"
+            @bone-transform="handleBoneTransform"
             @error="errorText = $event"
           />
           <div v-else v-loading="loading" class="lab__placeholder">
@@ -756,7 +815,7 @@ async function reveal(): Promise<void> {
           </template>
         </section>
 
-        <section class="block">
+        <section v-if="tab === 'parts' || groups.length > 0" class="block">
           <h3 class="block__title">
             分组 <span class="block__count">{{ groups.length }}</span>
             <el-button
@@ -878,6 +937,47 @@ async function reveal(): Promise<void> {
               <span class="num text-muted">{{ formatDateTime(model?.updatedAt, true) }}</span>
             </div>
           </div>
+        </section>
+
+        <section v-if="selectedBoneId" class="block">
+          <h3 class="block__title">编辑骨骼</h3>
+          <el-radio-group v-model="gizmoMode" size="small" class="edit-modes">
+            <el-radio-button value="rotate">旋转</el-radio-button>
+            <el-radio-button value="translate">移动</el-radio-button>
+            <el-radio-button value="off">关闭</el-radio-button>
+          </el-radio-group>
+
+          <div class="edit-vec">
+            <span class="edit-vec__label">位置</span>
+            <el-input
+              v-for="axis in POSITION_AXES"
+              :key="`p-${axis}`"
+              :model-value="fmtVec(boneTransform?.position, axis, 3)"
+              size="small"
+              class="edit-vec__input"
+              @change="(value: string) => onPositionChange(axis, value)"
+              @keyup.enter="commitOnEnter"
+            />
+          </div>
+
+          <div class="edit-vec">
+            <span class="edit-vec__label">旋转°</span>
+            <el-input
+              v-for="axis in POSITION_AXES"
+              :key="`r-${axis}`"
+              :model-value="fmtVec(boneTransform?.rotation, axis, 2)"
+              size="small"
+              class="edit-vec__input"
+              @change="(value: string) => onRotationChange(axis, value)"
+              @keyup.enter="commitOnEnter"
+            />
+          </div>
+
+          <div class="edit-actions">
+            <el-button size="small" @click="resetSelectedBone">复位该骨骼</el-button>
+            <el-button size="small" @click="resetAllPose">复位全部姿态</el-button>
+          </div>
+          <p class="block__hint">拖动手柄或直接改数值；编辑时会暂停当前动作</p>
         </section>
 
         <p class="lab__path mono" :title="model?.path">{{ model?.path }}</p>
@@ -1040,6 +1140,9 @@ async function reveal(): Promise<void> {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
+  max-height: 208px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .clip--lib {
@@ -1049,6 +1152,58 @@ async function reveal(): Promise<void> {
 
 .clip--lib .clip__name {
   font-size: 11.5px;
+}
+
+/* 骨骼编辑面板 */
+.edit-modes {
+  display: flex;
+  width: 100%;
+}
+
+.edit-modes :deep(.el-radio-button) {
+  flex: 1;
+}
+
+.edit-modes :deep(.el-radio-button__inner) {
+  width: 100%;
+  padding: 4px 0;
+  font-size: 11.5px;
+}
+
+.edit-vec {
+  display: grid;
+  grid-template-columns: 34px repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  align-items: center;
+}
+
+.edit-vec__label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.edit-vec__input {
+  width: 100%;
+}
+
+.edit-vec__input :deep(.el-input__wrapper) {
+  padding: 0 4px;
+}
+
+.edit-vec__input :deep(.el-input__inner) {
+  font-size: 11px;
+  text-align: right;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.edit-actions :deep(.el-button) {
+  flex: 1;
+  margin-left: 0;
 }
 
 .tree-empty {

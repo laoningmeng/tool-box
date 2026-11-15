@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
@@ -43,6 +44,8 @@ const props = withDefaults(
     highlightColor?: string
     /** 高亮强度（自发光强度），0.05 ~ 1.5 */
     highlightIntensity?: number
+    /** 骨骼编辑 gizmo：rotate / translate / off */
+    gizmoMode?: 'rotate' | 'translate' | 'off'
   }>(),
   {
     format: 'glb',
@@ -53,7 +56,8 @@ const props = withDefaults(
     background: '#0b1220',
     exposure: 1,
     highlightColor: '#ffb74d',
-    highlightIntensity: 0.45
+    highlightIntensity: 0.45,
+    gizmoMode: 'off'
   }
 )
 
@@ -61,6 +65,14 @@ const emit = defineEmits<{
   parsed: [structure: ViewerStructure]
   semantics: [summary: SemanticSummary]
   tick: [state: { time: number; duration: number; playing: boolean; index: number }]
+  /** 骨骼被 gizmo 拖动或数值修改后的局部变换（旋转为角度制） */
+  'bone-transform': [
+    payload: {
+      id: string
+      position: { x: number; y: number; z: number }
+      rotation: { x: number; y: number; z: number }
+    }
+  ]
   error: [message: string]
 }>()
 
@@ -90,6 +102,13 @@ let boneOverlay: {
 } | null = null
 /** 当前选中的骨骼（标记环每帧跟着它走） */
 let selectedBone: THREE.Bone | null = null
+/** 骨骼编辑 gizmo（TransformControls） */
+let gizmo: TransformControls | null = null
+/** 绑定姿态下的局部变换，用于「复位」 */
+const initialLocal = new Map<
+  string,
+  { position: THREE.Vector3; quaternion: THREE.Quaternion; scale: THREE.Vector3 }
+>()
 let boneMarker: THREE.Mesh | null = null
 /** 选中高亮改过的材质，取消选中时要还原 */
 let highlighted: Array<{ material: THREE.MeshStandardMaterial; emissive: THREE.Color; intensity: number }> = []
@@ -239,6 +258,7 @@ function collectBones(root: THREE.Object3D): THREE.Bone[] {
 function parseBones(root: THREE.Object3D): ViewerBone[] {
   boneObjects.clear()
   boneByName.clear()
+  initialLocal.clear()
   const bones = collectBones(root)
   if (bones.length === 0) return []
 
@@ -248,6 +268,12 @@ function parseBones(root: THREE.Object3D): ViewerBone[] {
   for (const bone of bones) {
     boneObjects.set(bone.uuid, bone)
     if (bone.name) boneByName.set(bone.name, bone)
+    // 记下绑定姿态，用于「复位骨骼 / 复位全部姿态」
+    initialLocal.set(bone.uuid, {
+      position: bone.position.clone(),
+      quaternion: bone.quaternion.clone(),
+      scale: bone.scale.clone()
+    })
     const parent = bone.parent
     if (parent && boneSet.has(parent as THREE.Bone)) {
       childCount.set(parent, (childCount.get(parent) ?? 0) + 1)
@@ -400,6 +426,119 @@ function generateActionClip(kind: ActionKind): { ok: boolean; name?: string; mes
   } catch (error) {
     return { ok: false, message: `生成动作失败：${(error as Error).message}` }
   }
+}
+
+/* ------------------------------- 骨骼编辑 ------------------------------- */
+
+function toDeg(rad: number): number {
+  return Math.round(((rad * 180) / Math.PI) * 100) / 100
+}
+
+function stopAnimationForEdit(): void {
+  if (!mixer || !activeAction) return
+  mixer.stopAllAction()
+  activeAction = null
+  emit('tick', { time: 0, duration: 0, playing: false, index: -1 })
+}
+
+function emitBoneTransform(): void {
+  if (!selectedBone) return
+  const euler = new THREE.Euler().setFromQuaternion(selectedBone.quaternion, 'XYZ')
+  emit('bone-transform', {
+    id: selectedBone.uuid,
+    position: {
+      x: Math.round(selectedBone.position.x * 1000) / 1000,
+      y: Math.round(selectedBone.position.y * 1000) / 1000,
+      z: Math.round(selectedBone.position.z * 1000) / 1000
+    },
+    rotation: { x: toDeg(euler.x), y: toDeg(euler.y), z: toDeg(euler.z) }
+  })
+}
+
+function attachGizmo(bone: THREE.Bone | null): void {
+  if (!gizmo) return
+  const helper = gizmo.getHelper()
+  if (!bone || props.gizmoMode === 'off') {
+    gizmo.detach()
+    helper.visible = false
+    return
+  }
+  gizmo.setMode(props.gizmoMode)
+  gizmo.attach(bone)
+  helper.visible = true
+}
+
+function getBoneTransform(id: string): {
+  position: { x: number; y: number; z: number }
+  rotation: { x: number; y: number; z: number }
+} | null {
+  const bone = boneObjects.get(id)
+  if (!bone) return null
+  const euler = new THREE.Euler().setFromQuaternion(bone.quaternion, 'XYZ')
+  return {
+    position: { x: bone.position.x, y: bone.position.y, z: bone.position.z },
+    rotation: { x: toDeg(euler.x), y: toDeg(euler.y), z: toDeg(euler.z) }
+  }
+}
+
+/** 数值面板改骨骼：旋转用角度制；只动传进来的分量 */
+function setBoneTransform(
+  id: string,
+  patch: {
+    position?: Partial<{ x: number; y: number; z: number }>
+    rotation?: Partial<{ x: number; y: number; z: number }>
+  }
+): void {
+  const bone = boneObjects.get(id)
+  if (!bone) return
+  stopAnimationForEdit()
+
+  if (patch.position) {
+    if (patch.position.x !== undefined) bone.position.x = patch.position.x
+    if (patch.position.y !== undefined) bone.position.y = patch.position.y
+    if (patch.position.z !== undefined) bone.position.z = patch.position.z
+  }
+  if (patch.rotation) {
+    const euler = new THREE.Euler().setFromQuaternion(bone.quaternion, 'XYZ')
+    bone.quaternion.setFromEuler(
+      new THREE.Euler(
+        THREE.MathUtils.degToRad(patch.rotation.x ?? toDeg(euler.x)),
+        THREE.MathUtils.degToRad(patch.rotation.y ?? toDeg(euler.y)),
+        THREE.MathUtils.degToRad(patch.rotation.z ?? toDeg(euler.z)),
+        'XYZ'
+      )
+    )
+  }
+  bone.updateMatrixWorld(true)
+  emitBoneTransform()
+  if (boneOverlay) updateSkeletonOverlay()
+}
+
+function resetBone(id: string): void {
+  const bone = boneObjects.get(id)
+  const rest = initialLocal.get(id)
+  if (!bone || !rest) return
+  stopAnimationForEdit()
+  bone.position.copy(rest.position)
+  bone.quaternion.copy(rest.quaternion)
+  bone.scale.copy(rest.scale)
+  bone.updateMatrixWorld(true)
+  emitBoneTransform()
+  if (boneOverlay) updateSkeletonOverlay()
+}
+
+function resetPose(): void {
+  stopAnimationForEdit()
+  for (const [id, bone] of boneObjects) {
+    const rest = initialLocal.get(id)
+    if (!rest) continue
+    bone.position.copy(rest.position)
+    bone.quaternion.copy(rest.quaternion)
+    bone.scale.copy(rest.scale)
+  }
+  if (current) current.updateMatrixWorld(true)
+  emitBoneTransform()
+  if (boneOverlay) updateSkeletonOverlay()
 }
 
 /* ------------------------------- 相机与网格 ------------------------------- */
@@ -646,6 +785,8 @@ function disposeObject(object: THREE.Object3D): void {
 function clearModel(): void {
   if (!scene || !current) return
   clearSelectionVisual()
+  gizmo?.detach()
+  if (gizmo) gizmo.getHelper().visible = false
   disposeSkeletonOverlay()
   if (mixer) {
     mixer.stopAllAction()
@@ -747,12 +888,15 @@ function selectNode(id: string): void {
   if (part) {
     lastHighlight = { type: 'part', value: id }
     highlightPart(part)
+    attachGizmo(null)
     return
   }
   const bone = boneObjects.get(id)
   if (bone) {
     lastHighlight = { type: 'bone', value: id }
     highlightBone(bone)
+    attachGizmo(bone)
+    emitBoneTransform()
   }
 }
 
@@ -761,6 +905,7 @@ function highlightParts(keys: string[]): void {
   selectionId = ''
   lastHighlight = keys.length ? { type: 'parts', value: [...keys] } : null
   clearSelectionVisual()
+  attachGizmo(null)
   for (const key of keys) {
     const object = partByKey.get(key)
     if (object) highlightPart(object)
@@ -976,6 +1121,34 @@ onMounted(() => {
     if (controls) controls.autoRotate = false
   })
 
+  // 骨骼编辑 gizmo：旋转/移动，拖动时暂停轨道控制
+  gizmo = new TransformControls(camera, renderer.domElement)
+  gizmo.setSpace('local')
+  gizmo.setMode(props.gizmoMode === 'translate' ? 'translate' : 'rotate')
+  gizmo.setSize(0.8)
+  const gizmoHelper = gizmo.getHelper()
+  gizmoHelper.visible = false
+  gizmoHelper.renderOrder = 1000
+  gizmoHelper.traverse((child) => {
+    const mesh = child as THREE.Mesh
+    const material = mesh.material as THREE.Material | THREE.Material[] | undefined
+    const list = Array.isArray(material) ? material : material ? [material] : []
+    for (const item of list) {
+      item.depthTest = false
+      item.depthWrite = false
+    }
+  })
+  scene.add(gizmoHelper)
+  gizmo.addEventListener('dragging-changed', (event) => {
+    const dragging = Boolean((event as unknown as { value: boolean }).value)
+    if (controls) controls.enabled = !dragging
+    if (dragging) stopAnimationForEdit()
+  })
+  gizmo.addEventListener('objectChange', () => {
+    emitBoneTransform()
+    if (boneOverlay) updateSkeletonOverlay()
+  })
+
   pmrem = new THREE.PMREMGenerator(renderer)
   envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
   scene.environment = envTexture
@@ -998,6 +1171,9 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(frameId)
   resizeObserver?.disconnect()
   controls?.dispose()
+  gizmo?.detach()
+  gizmo?.dispose()
+  gizmo = null
   mixer = null
   clearModel()
   disposeSkeletonOverlay()
@@ -1043,6 +1219,24 @@ watch(
 )
 
 watch(
+  () => props.gizmoMode,
+  (mode) => {
+    if (!gizmo) return
+    const helper = gizmo.getHelper()
+    if (mode === 'off') {
+      gizmo.detach()
+      helper.visible = false
+      return
+    }
+    gizmo.setMode(mode)
+    if (selectedBone) {
+      gizmo.attach(selectedBone)
+      helper.visible = true
+    }
+  }
+)
+
+watch(
   () => [props.highlightColor, props.highlightIntensity] as const,
   () => {
     reapplyHighlight()
@@ -1067,6 +1261,10 @@ defineExpose({
   highlightParts,
   exportParts,
   generateActionClip,
+  getBoneTransform,
+  setBoneTransform,
+  resetBone,
+  resetPose,
   focusNode,
   playClip,
   pauseClip,
