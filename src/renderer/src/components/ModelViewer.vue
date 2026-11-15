@@ -33,6 +33,10 @@ const props = withDefaults(
     showSkeleton?: boolean
     background?: string
     exposure?: number
+    /** 选中部件/骨骼的高亮颜色 */
+    highlightColor?: string
+    /** 高亮强度（自发光强度），0.05 ~ 1.5 */
+    highlightIntensity?: number
   }>(),
   {
     format: 'glb',
@@ -41,7 +45,9 @@ const props = withDefaults(
     showGrid: true,
     showSkeleton: false,
     background: '#0b1220',
-    exposure: 1
+    exposure: 1,
+    highlightColor: '#ffb74d',
+    highlightIntensity: 0.45
   }
 )
 
@@ -68,6 +74,8 @@ let skeletonHelper: THREE.SkeletonHelper | null = null
 let boneMarker: THREE.Mesh | null = null
 /** 选中高亮改过的材质，取消选中时要还原 */
 let highlighted: Array<{ material: THREE.MeshStandardMaterial; emissive: THREE.Color; intensity: number }> = []
+/** 当前高亮的对象，颜色/强度变化时用来重刷 */
+let lastHighlight: { type: 'part' | 'parts' | 'bone'; value: string | string[] } | null = null
 
 let mixer: THREE.AnimationMixer | null = null
 let actions: THREE.AnimationAction[] = []
@@ -318,6 +326,8 @@ function clearSelectionVisual(): void {
 
 /** 选中部件：给材质加一点自发光，保持整体视图不变（不画包围盒、不推镜头） */
 function highlightPart(object: THREE.Object3D): void {
+  const color = new THREE.Color(props.highlightColor || '#ffb74d')
+  const intensity = Math.max(0.01, props.highlightIntensity ?? 0.45)
   object.traverse((child) => {
     const mesh = child as THREE.Mesh
     if (!mesh.isMesh) return
@@ -330,8 +340,8 @@ function highlightPart(object: THREE.Object3D): void {
         emissive: m.emissive.clone(),
         intensity: m.emissiveIntensity ?? 1
       })
-      m.emissive = new THREE.Color(0xffb74d)
-      m.emissiveIntensity = 0.45
+      m.emissive.copy(color)
+      m.emissiveIntensity = intensity
     }
   })
 }
@@ -343,7 +353,7 @@ function highlightBone(bone: THREE.Bone): void {
   const radius = Math.max(modelRadius * 0.008, 0.0015)
   boneMarker = new THREE.Mesh(
     new THREE.SphereGeometry(radius, 16, 12),
-    new THREE.MeshBasicMaterial({ color: 0xffb74d, depthTest: false })
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(props.highlightColor || '#ffb74d'), depthTest: false })
   )
   boneMarker.position.copy(world)
   boneMarker.renderOrder = 999
@@ -400,6 +410,7 @@ function clearModel(): void {
   partObjects.clear()
   boneObjects.clear()
   selectionId = ''
+  lastHighlight = null
 }
 
 async function loadModel(bytes: Uint8Array | ArrayBuffer): Promise<void> {
@@ -478,21 +489,33 @@ function selectNode(id: string): void {
   clearSelectionVisual()
   const part = partObjects.get(id)
   if (part) {
+    lastHighlight = { type: 'part', value: id }
     highlightPart(part)
     return
   }
   const bone = boneObjects.get(id)
-  if (bone) highlightBone(bone)
+  if (bone) {
+    lastHighlight = { type: 'bone', value: id }
+    highlightBone(bone)
+  }
 }
 
 /** 按稳定 key 批量高亮（应用分组时用） */
 function highlightParts(keys: string[]): void {
   selectionId = ''
+  lastHighlight = keys.length ? { type: 'parts', value: [...keys] } : null
   clearSelectionVisual()
   for (const key of keys) {
     const object = partByKey.get(key)
     if (object) highlightPart(object)
   }
+}
+
+/** 高亮颜色/强度被改了：按当前选中项重刷一遍 */
+function reapplyHighlight(): void {
+  if (!lastHighlight) return
+  if (lastHighlight.type === 'parts') highlightParts(lastHighlight.value as string[])
+  else selectNode(lastHighlight.value as string)
 }
 
 function setVisibleByKeys(keys: string[], visible: boolean): void {
@@ -758,6 +781,13 @@ watch(
   () => props.showSkeleton,
   () => {
     refreshSkeletonHelper()
+  }
+)
+
+watch(
+  () => [props.highlightColor, props.highlightIntensity] as const,
+  () => {
+    reapplyHighlight()
   }
 )
 

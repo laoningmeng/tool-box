@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  Brush,
   Camera,
   Delete,
   Download,
@@ -73,6 +74,28 @@ const display = reactive({
 
 const hiddenParts = reactive(new Set<string>())
 const presetColors = ['#0b1220', '#141a24', '#1e293b', '#0f172a', '#f4f6fb', '#2b2140']
+
+/* 选中高亮的外观：颜色 + 亮度，存 localStorage，下次打开还在 */
+const HL_PRESETS = ['#ffb74d', '#4f46e5', '#10b981', '#ef4444', '#22d3ee', '#ffffff']
+
+function readNumber(key: string, fallback: number): number {
+  const raw = localStorage.getItem(key)
+  const num = raw === null ? Number.NaN : Number(raw)
+  return Number.isFinite(num) ? num : fallback
+}
+
+const highlight = reactive({
+  color: localStorage.getItem('lab:highlight-color') || '#ffb74d',
+  intensity: readNumber('lab:highlight-intensity', 0.45)
+})
+
+watch(
+  () => [highlight.color, highlight.intensity] as const,
+  ([color, intensity]) => {
+    localStorage.setItem('lab:highlight-color', color)
+    localStorage.setItem('lab:highlight-intensity', String(intensity))
+  }
+)
 
 /** 多选：Ctrl/⌘ 点选、Shift 连选，用于保存成分组导出 */
 const selectedKeys = ref<string[]>([])
@@ -534,6 +557,31 @@ async function reveal(): Promise<void> {
             />
           </el-tooltip>
           <span class="view-toolbar__sep" />
+          <el-popover placement="bottom" :width="252" trigger="click">
+            <template #reference>
+              <el-button size="small" :icon="Brush">高亮</el-button>
+            </template>
+            <div class="hl">
+              <div class="hl__row">
+                <span class="hl__label">选中颜色</span>
+                <el-color-picker v-model="highlight.color" size="small" :predefine="HL_PRESETS" />
+              </div>
+              <div class="hl__row">
+                <span class="hl__label">亮度</span>
+                <el-slider
+                  v-model="highlight.intensity"
+                  :min="0.05"
+                  :max="1.5"
+                  :step="0.05"
+                  size="small"
+                  class="hl__slider"
+                />
+                <span class="hl__value num">{{ highlight.intensity.toFixed(2) }}</span>
+              </div>
+              <p class="hl__hint">只影响选中部件/骨骼的高亮，不改模型材质</p>
+            </div>
+          </el-popover>
+          <span class="view-toolbar__sep" />
           <el-color-picker v-model="display.background" size="small" :predefine="presetColors" />
           <span class="view-toolbar__label">光照</span>
           <el-slider v-model="display.exposure" :min="0.3" :max="2.5" :step="0.1" size="small" class="view-toolbar__slider" />
@@ -551,6 +599,8 @@ async function reveal(): Promise<void> {
             :show-skeleton="display.showSkeleton"
             :background="display.background"
             :exposure="display.exposure"
+            :highlight-color="highlight.color"
+            :highlight-intensity="highlight.intensity"
             @parsed="handleParsed"
             @tick="handleTick"
             @error="errorText = $event"
@@ -932,6 +982,45 @@ async function reveal(): Promise<void> {
 
 .view-toolbar__slider {
   width: 90px;
+}
+
+.hl {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 2px;
+}
+
+.hl__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hl__label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  width: 58px;
+  flex: none;
+}
+
+.hl__slider {
+  flex: 1;
+  margin: 0;
+}
+
+.hl__value {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  width: 30px;
+  text-align: right;
+}
+
+.hl__hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
 }
 
 .lab__stage {
