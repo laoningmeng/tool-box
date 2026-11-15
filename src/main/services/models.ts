@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { BrowserWindow, dialog, safeStorage, shell } from 'electron'
 import type {
+  ApiKeyTestResult,
   ModelAsset,
   ModelConfigPatch,
   ModelConfigView,
@@ -283,4 +284,106 @@ export async function pickImportDir(win: BrowserWindow | null): Promise<string |
   const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
   if (result.canceled || result.filePaths.length === 0) return null
   return result.filePaths[0]
+}
+
+/* ------------------------------ 密钥连通性检测 ------------------------------ */
+
+type ModelTool = 'tripo' | 'meshy'
+
+/**
+ * 两个平台的「余额」接口，都是纯读、调用免费，最适合用来验证 Key：
+ * - Tripo: GET /v3/account/balance
+ * - Meshy: GET /openapi/v1/balance
+ * 国际站点不通时回退到国内域名。
+ */
+const BALANCE_ENDPOINTS: Record<ModelTool, string[]> = {
+  tripo: ['https://openapi.tripo3d.com/v3/account/balance', 'https://openapi.tripo3d.ai/v3/account/balance'],
+  meshy: ['https://api.meshy.ai/openapi/v1/balance', 'https://api.meshy.cn/openapi/v1/balance']
+}
+
+const TEST_TIMEOUT_MS = 12000
+
+function pickBalance(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return ''
+  const record = payload as Record<string, unknown>
+  const nested = (record.data ?? {}) as Record<string, unknown>
+  const balance = record.balance ?? nested.balance
+  if (typeof balance === 'number') return `余额 ${balance}`
+  if (typeof balance === 'string' && balance) return `余额 ${balance}`
+  return ''
+}
+
+export async function testModelKey(tool: ModelTool, apiKey?: string): Promise<ApiKeyTestResult> {
+  const config = getDb().modelConfig
+  const stored = tool === 'tripo' ? config.tripoApiKey : config.meshyApiKey
+  const key = (apiKey ?? '').trim() || open(stored)
+  if (!key) {
+    return { ok: false, status: 0, message: '还没有填写 API Key', latencyMs: 0 }
+  }
+
+  const endpoints = BALANCE_ENDPOINTS[tool]
+  let lastError = ''
+  for (const url of endpoints) {
+    const started = Date.now()
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS)
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+        signal: controller.signal
+      })
+      const latencyMs = Date.now() - started
+      const text = await response.text().catch(() => '')
+      let payload: unknown = null
+      try {
+        payload = text ? JSON.parse(text) : null
+      } catch {
+        payload = null
+      }
+
+      if (response.ok) {
+        const detail = pickBalance(payload)
+        return {
+          ok: true,
+          status: response.status,
+          message: detail ? `可用 · ${detail}` : '可用',
+          latencyMs,
+          detail: detail || undefined
+        }
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        return { ok: false, status: response.status, message: '密钥无效或已过期（401/403）', latencyMs }
+      }
+      if (response.status === 402) {
+        return { ok: false, status: 402, message: '密钥有效，但账户额度不足', latencyMs }
+      }
+      if (response.status === 429) {
+        return { ok: false, status: 429, message: '密钥有效，但请求被限流，稍后再试', latencyMs }
+      }
+      const hint = text.slice(0, 120).replace(/\s+/g, ' ').trim()
+      return {
+        ok: false,
+        status: response.status,
+        message: `服务返回 HTTP ${response.status}`,
+        latencyMs,
+        detail: hint || undefined
+      }
+    } catch (error) {
+      const latencyMs = Date.now() - started
+      const aborted = (error as Error).name === 'AbortError'
+      lastError = aborted ? '请求超时' : (error as Error).message
+      log('warn', `检测 ${tool} API Key 失败（${url}）`, lastError, `${latencyMs}ms`)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  return {
+    ok: false,
+    status: 0,
+    message: `无法连接 ${tool === 'tripo' ? 'Tripo' : 'Meshy'} 服务：${lastError || '网络错误'}`,
+    latencyMs: 0
+  }
 }

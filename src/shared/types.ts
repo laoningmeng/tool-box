@@ -347,10 +347,27 @@ export interface ModelApi {
   reveal(id: string): Promise<void>
 }
 
+/** 密钥连通性检测结果 */
+export interface ApiKeyTestResult {
+  ok: boolean
+  /** HTTP 状态码；网络层失败为 0 */
+  status: number
+  /** 可直接展示的结论，例如「可用 · 余额 1000」 */
+  message: string
+  latencyMs: number
+  /** 远端返回的额度等附加信息 */
+  detail?: string
+}
+
 export interface ModelConfigApi {
   get(): Promise<ModelConfigView>
   save(patch: ModelConfigPatch): Promise<ModelConfigView>
   pickImportDir(): Promise<string | null>
+  /**
+   * 检测 API Key 是否可用。
+   * 传 apiKey 时测这次输入的值（还没保存也行），不传则测已保存的密钥。
+   */
+  test(tool: 'tripo' | 'meshy', apiKey?: string): Promise<ApiKeyTestResult>
 }
 
 /* ---------------------------------- API ---------------------------------- */

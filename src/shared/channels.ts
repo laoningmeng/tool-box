@@ -44,7 +44,8 @@ export const IPC = {
   modelConfig: {
     get: 'model-config:get',
     save: 'model-config:save',
-    pickDir: 'model-config:pick-dir'
+    pickDir: 'model-config:pick-dir',
+    test: 'model-config:test'
   },
   python: {
     status: 'python:status',

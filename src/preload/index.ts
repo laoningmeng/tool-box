@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/channels'
 import type {
+  ApiKeyTestResult,
   AppSettings,
   AppSystemInfo,
   BackupResult,
@@ -90,7 +91,9 @@ const api: BridgeApi = {
     get: (): Promise<ModelConfigView> => ipcRenderer.invoke(IPC.modelConfig.get),
     save: (patch: ModelConfigPatch): Promise<ModelConfigView> =>
       ipcRenderer.invoke(IPC.modelConfig.save, patch),
-    pickImportDir: (): Promise<string | null> => ipcRenderer.invoke(IPC.modelConfig.pickDir)
+    pickImportDir: (): Promise<string | null> => ipcRenderer.invoke(IPC.modelConfig.pickDir),
+    test: (tool: 'tripo' | 'meshy', apiKey?: string): Promise<ApiKeyTestResult> =>
+      ipcRenderer.invoke(IPC.modelConfig.test, tool, apiKey)
   },
   python: {
     status: (): Promise<PythonStatus> => ipcRenderer.invoke(IPC.python.status),

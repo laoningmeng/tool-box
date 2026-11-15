@@ -1,18 +1,31 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Delete, FolderOpened, Lock, Refresh } from '@element-plus/icons-vue'
+import {
+  CircleCheckFilled,
+  CircleCloseFilled,
+  Connection,
+  Delete,
+  FolderOpened,
+  Lock,
+  Refresh
+} from '@element-plus/icons-vue'
 import { storeToRefs } from 'pinia'
-import type { ModelConfigPatch } from '@shared/types'
+import type { ApiKeyTestResult, ModelConfigPatch } from '@shared/types'
 import { useModelStore } from '@renderer/stores/models'
 
 /**
  * 3D 工具配置：Tripo / Meshy 的 API Key + 导入偏好。
  * Key 由主进程用系统安全存储加密后落库，渲染层只能拿到掩码，不会回显明文。
+ * 「测试」会拿输入框里的值（没填就用已保存的）去请求对方的余额接口，判断 Key 是否可用。
  */
+
+type Tool = 'tripo' | 'meshy'
 
 const store = useModelStore()
 const { config, configLoading } = storeToRefs(store)
+
+const TOOL_LABEL: Record<Tool, string> = { tripo: 'Tripo', meshy: 'Meshy' }
 
 /** 输入框草稿：只有「改过」才在保存时提交，避免把空值误写成清除 */
 const tripoDraft = ref('')
@@ -22,6 +35,8 @@ const meshyEdited = ref(false)
 const dirDraft = ref('')
 const autoDraft = ref(true)
 const saving = ref(false)
+const testing = ref<Tool | null>(null)
+const testResults = reactive<Record<Tool, ApiKeyTestResult | null>>({ tripo: null, meshy: null })
 
 const dirty = computed(() => {
   if (tripoEdited.value || meshyEdited.value) return true
@@ -38,6 +53,8 @@ function syncDraft(): void {
   meshyEdited.value = false
   dirDraft.value = config.value?.defaultImportDir ?? ''
   autoDraft.value = config.value?.autoDetectSource ?? true
+  testResults.tripo = null
+  testResults.meshy = null
 }
 
 onMounted(async () => {
@@ -80,7 +97,7 @@ async function handleSave(): Promise<void> {
   }
 }
 
-function clearKey(tool: 'tripo' | 'meshy'): void {
+function clearKey(tool: Tool): void {
   if (tool === 'tripo') {
     tripoDraft.value = ''
     tripoEdited.value = true
@@ -88,7 +105,46 @@ function clearKey(tool: 'tripo' | 'meshy'): void {
     meshyDraft.value = ''
     meshyEdited.value = true
   }
+  testResults[tool] = null
   ElMessage.info('已清空输入框，点击「保存配置」后生效')
+}
+
+function canTest(tool: Tool): boolean {
+  if (testing.value) return false
+  if (tool === 'tripo') {
+    return Boolean(tripoEdited.value ? tripoDraft.value.trim() : config.value?.tripo.configured)
+  }
+  return Boolean(meshyEdited.value ? meshyDraft.value.trim() : config.value?.meshy.configured)
+}
+
+function markEdited(tool: Tool): void {
+  if (tool === 'tripo') tripoEdited.value = true
+  else meshyEdited.value = true
+  testResults[tool] = null
+}
+
+/** 优先测输入框里的新值，没改过就用已保存的 Key */
+async function handleTest(tool: Tool): Promise<void> {
+  if (!canTest(tool)) return
+  const draft = tool === 'tripo' ? tripoDraft.value : meshyDraft.value
+  const edited = tool === 'tripo' ? tripoEdited.value : meshyEdited.value
+  testing.value = tool
+  testResults[tool] = null
+  try {
+    const result = await window.api.modelConfig.test(tool, edited ? draft : undefined)
+    testResults[tool] = result
+    if (result.ok) ElMessage.success(`${TOOL_LABEL[tool]} 密钥可用`)
+    else ElMessage.error(`${TOOL_LABEL[tool]} 密钥不可用：${result.message}`)
+  } catch (error) {
+    testResults[tool] = {
+      ok: false,
+      status: 0,
+      message: `检测失败：${(error as Error).message}`,
+      latencyMs: 0
+    }
+  } finally {
+    testing.value = null
+  }
 }
 </script>
 
@@ -135,7 +191,7 @@ function clearKey(tool: 'tripo' | 'meshy'): void {
           clearable
           autocomplete="off"
           :placeholder="config?.tripo.masked || '粘贴 Tripo API Key，例如 tsk_xxx'"
-          @input="tripoEdited = true"
+          @input="markEdited('tripo')"
         />
         <div class="config-meta">
           <span v-if="config?.tripo.configured" class="mono text-muted">当前：{{ config.tripo.masked }}</span>
@@ -150,6 +206,31 @@ function clearKey(tool: 'tripo' | 'meshy'): void {
           >
             清除
           </el-button>
+        </div>
+        <div class="test-row">
+          <el-button
+            size="small"
+            :icon="Connection"
+            :loading="testing === 'tripo'"
+            :disabled="!canTest('tripo')"
+            @click="handleTest('tripo')"
+          >
+            测试连接
+          </el-button>
+          <span
+            v-if="testResults.tripo"
+            class="test-result"
+            :class="testResults.tripo.ok ? 'is-ok' : 'is-bad'"
+            :title="testResults.tripo.detail || ''"
+          >
+            <el-icon>
+              <component :is="testResults.tripo.ok ? CircleCheckFilled : CircleCloseFilled" />
+            </el-icon>
+            <span>{{ testResults.tripo.message }}</span>
+            <span v-if="testResults.tripo.latencyMs" class="num test-result__ms">
+              {{ testResults.tripo.latencyMs }}ms
+            </span>
+          </span>
         </div>
       </div>
     </section>
@@ -176,7 +257,7 @@ function clearKey(tool: 'tripo' | 'meshy'): void {
           clearable
           autocomplete="off"
           :placeholder="config?.meshy.masked || '粘贴 Meshy API Key'"
-          @input="meshyEdited = true"
+          @input="markEdited('meshy')"
         />
         <div class="config-meta">
           <span v-if="config?.meshy.configured" class="mono text-muted">当前：{{ config.meshy.masked }}</span>
@@ -191,6 +272,31 @@ function clearKey(tool: 'tripo' | 'meshy'): void {
           >
             清除
           </el-button>
+        </div>
+        <div class="test-row">
+          <el-button
+            size="small"
+            :icon="Connection"
+            :loading="testing === 'meshy'"
+            :disabled="!canTest('meshy')"
+            @click="handleTest('meshy')"
+          >
+            测试连接
+          </el-button>
+          <span
+            v-if="testResults.meshy"
+            class="test-result"
+            :class="testResults.meshy.ok ? 'is-ok' : 'is-bad'"
+            :title="testResults.meshy.detail || ''"
+          >
+            <el-icon>
+              <component :is="testResults.meshy.ok ? CircleCheckFilled : CircleCloseFilled" />
+            </el-icon>
+            <span>{{ testResults.meshy.message }}</span>
+            <span v-if="testResults.meshy.latencyMs" class="num test-result__ms">
+              {{ testResults.meshy.latencyMs }}ms
+            </span>
+          </span>
         </div>
       </div>
     </section>
@@ -303,6 +409,37 @@ function clearKey(tool: 'tripo' | 'meshy'): void {
   gap: 10px;
   font-size: 12.5px;
   min-height: 20px;
+}
+
+.test-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.test-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+}
+
+.test-result.is-ok {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.test-result.is-bad {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.test-result__ms {
+  opacity: 0.75;
+  font-size: 11px;
 }
 
 .dir-row {

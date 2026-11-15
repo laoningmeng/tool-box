@@ -55,6 +55,7 @@ import {
   revealModel,
   saveModelConfig,
   summarizeModels,
+  testModelKey,
   updateModel
 } from './services/models'
 import type { ComfyRunRequest, WorkflowCategory } from '../shared/types'
@@ -271,6 +272,9 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.modelConfig.get, () => getModelConfigView())
   ipcMain.handle(IPC.modelConfig.save, (_event, patch: ModelConfigPatch) => saveModelConfig(patch))
   ipcMain.handle(IPC.modelConfig.pickDir, (event) => pickImportDir(BrowserWindow.fromWebContents(event.sender)))
+  ipcMain.handle(IPC.modelConfig.test, (_event, tool: 'tripo' | 'meshy', apiKey?: string) =>
+    testModelKey(tool, apiKey)
+  )
 
   /* --------------------------------- Python -------------------------------- */
   ipcMain.handle(IPC.python.status, async () => {
