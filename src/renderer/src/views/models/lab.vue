@@ -140,13 +140,19 @@ function handleTick(state: { time: number; duration: number; playing: boolean; i
 function selectPart(id: string): void {
   selectedId.value = id
   selectedKind.value = 'part'
-  viewer.value?.focusNode(id)
+  viewer.value?.selectNode(id)
 }
 
 function selectBone(id: string): void {
   selectedId.value = id
   selectedKind.value = 'bone'
-  viewer.value?.focusNode(id)
+  viewer.value?.selectNode(id)
+}
+
+/** 双击或点「聚焦」才推镜头，单击只高亮，避免把整体视图拉飞 */
+function focusSelected(): void {
+  if (!selectedId.value) return
+  viewer.value?.focusNode(selectedId.value)
 }
 
 function togglePartVisible(id: string): void {
@@ -295,6 +301,7 @@ async function reveal(): Promise<void> {
               :class="{ 'is-active': selectedId === part.id, 'is-hidden': hiddenParts.has(part.id) }"
               :style="{ paddingLeft: `${8 + part.depth * 12}px` }"
               @click="selectPart(part.id)"
+              @dblclick="viewer?.focusNode(part.id)"
             >
               <el-button
                 class="tree-row__eye"
@@ -320,6 +327,7 @@ async function reveal(): Promise<void> {
               :class="{ 'is-active': selectedId === bone.id }"
               :style="{ paddingLeft: `${8 + bone.depth * 12}px` }"
               @click="selectBone(bone.id)"
+              @dblclick="viewer?.focusNode(bone.id)"
             >
               <el-icon class="tree-row__icon"><Share /></el-icon>
               <span class="tree-row__name" :title="bone.name">{{ bone.name }}</span>
@@ -334,6 +342,7 @@ async function reveal(): Promise<void> {
         <footer class="panel-foot">
           <span v-if="tab === 'parts'">显示 {{ visibleCount }} / {{ structure?.parts.length ?? 0 }}</span>
           <span v-else>共 {{ structure?.bones.length ?? 0 }} 根骨骼</span>
+          <span class="panel-foot__hint">单击高亮 · 双击聚焦</span>
         </footer>
       </aside>
 
@@ -458,7 +467,12 @@ async function reveal(): Promise<void> {
         </section>
 
         <section class="block">
-          <h3 class="block__title">选中</h3>
+          <h3 class="block__title">
+            选中
+            <el-button v-if="selectedId" link type="primary" size="small" class="block__action" @click="focusSelected">
+              聚焦
+            </el-button>
+          </h3>
           <div v-if="selectedPart" class="info">
             <div class="info__row">
               <span>类型</span>
@@ -670,10 +684,18 @@ async function reveal(): Promise<void> {
 }
 
 .panel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 8px 12px;
   border-top: 1px solid var(--border-color);
   font-size: 11.5px;
   color: var(--text-tertiary);
+}
+
+.panel-foot__hint {
+  opacity: 0.8;
 }
 
 /* ---------- 中：视口 ---------- */
@@ -792,6 +814,13 @@ async function reveal(): Promise<void> {
   font-size: 11px;
   color: var(--text-tertiary);
   opacity: 0.8;
+}
+
+.block__action {
+  margin-left: auto;
+  height: auto;
+  padding: 0;
+  font-size: 11.5px;
 }
 
 .block__empty {

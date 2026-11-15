@@ -64,8 +64,9 @@ let current: THREE.Group | null = null
 let pmrem: THREE.PMREMGenerator | null = null
 let envTexture: THREE.Texture | null = null
 let skeletonHelper: THREE.SkeletonHelper | null = null
-let selectionHelper: THREE.BoxHelper | null = null
 let boneMarker: THREE.Mesh | null = null
+/** 选中高亮改过的材质，取消选中时要还原 */
+let highlighted: Array<{ material: THREE.MeshStandardMaterial; emissive: THREE.Color; intensity: number }> = []
 
 let mixer: THREE.AnimationMixer | null = null
 let actions: THREE.AnimationAction[] = []
@@ -297,12 +298,11 @@ function updateGrid(box: THREE.Box3): void {
 
 function clearSelectionVisual(): void {
   if (!scene) return
-  if (selectionHelper) {
-    scene.remove(selectionHelper)
-    selectionHelper.geometry.dispose()
-    ;(selectionHelper.material as THREE.Material).dispose()
-    selectionHelper = null
+  for (const item of highlighted) {
+    item.material.emissive.copy(item.emissive)
+    item.material.emissiveIntensity = item.intensity
   }
+  highlighted = []
   if (boneMarker) {
     scene.remove(boneMarker)
     boneMarker.geometry.dispose()
@@ -311,21 +311,34 @@ function clearSelectionVisual(): void {
   }
 }
 
+/** 选中部件：给材质加一点自发光，保持整体视图不变（不画包围盒、不推镜头） */
 function highlightPart(object: THREE.Object3D): void {
-  if (!scene) return
-  selectionHelper = new THREE.BoxHelper(object, 0xffd166)
-  ;(selectionHelper.material as THREE.LineBasicMaterial).depthTest = false
-  scene.add(selectionHelper)
+  object.traverse((child) => {
+    const mesh = child as THREE.Mesh
+    if (!mesh.isMesh) return
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    for (const material of materials) {
+      const m = material as THREE.MeshStandardMaterial
+      if (!m.emissive) continue
+      highlighted.push({
+        material: m,
+        emissive: m.emissive.clone(),
+        intensity: m.emissiveIntensity ?? 1
+      })
+      m.emissive = new THREE.Color(0xffb74d)
+      m.emissiveIntensity = 0.45
+    }
+  })
 }
 
 function highlightBone(bone: THREE.Bone): void {
   if (!scene) return
   const world = new THREE.Vector3()
   bone.getWorldPosition(world)
-  const radius = Math.max(modelRadius * 0.012, 0.002)
+  const radius = Math.max(modelRadius * 0.008, 0.0015)
   boneMarker = new THREE.Mesh(
     new THREE.SphereGeometry(radius, 16, 12),
-    new THREE.MeshBasicMaterial({ color: 0xffd166, depthTest: false })
+    new THREE.MeshBasicMaterial({ color: 0xffb74d, depthTest: false })
   )
   boneMarker.position.copy(world)
   boneMarker.renderOrder = 999
@@ -338,7 +351,6 @@ function refreshSkeletonHelper(): void {
   if (!scene) return
   if (skeletonHelper) {
     scene.remove(skeletonHelper)
-    selectionHelper = null
     skeletonHelper.geometry.dispose()
     ;(skeletonHelper.material as THREE.Material).dispose()
     skeletonHelper = null
@@ -455,31 +467,43 @@ function setPartVisible(id: string, visible: boolean): void {
   object.visible = visible
 }
 
-function focusNode(id: string): void {
-  if (!camera || !controls) return
+/** 只选中并高亮，不动镜头（点列表时的默认行为，保持整体视图） */
+function selectNode(id: string): void {
   selectionId = id
   clearSelectionVisual()
   const part = partObjects.get(id)
   if (part) {
     highlightPart(part)
-    const box = new THREE.Box3().setFromObject(part)
-    if (!box.isEmpty()) {
-      const center = new THREE.Vector3()
-      const size = new THREE.Vector3()
-      box.getCenter(center)
-      box.getSize(size)
-      const radius = Math.max(size.length() / 2, 0.001)
-      const distance = (radius / Math.tan((camera.fov * Math.PI) / 360)) * 2.6
-      controls.target.copy(center)
-      camera.position.copy(center).add(new THREE.Vector3(distance * 0.7, distance * 0.5, distance * 0.7))
-      camera.updateProjectionMatrix()
-      controls.update()
-    }
     return
   }
   const bone = boneObjects.get(id)
+  if (bone) highlightBone(bone)
+}
+
+/** 选中并把镜头推到该节点（双击 / 聚焦按钮触发） */
+function focusNode(id: string): void {
+  if (!camera || !controls) return
+  selectNode(id)
+
+  const part = partObjects.get(id)
+  if (part) {
+    const box = new THREE.Box3().setFromObject(part)
+    if (box.isEmpty()) return
+    const center = new THREE.Vector3()
+    const size = new THREE.Vector3()
+    box.getCenter(center)
+    box.getSize(size)
+    const radius = Math.max(size.length() / 2, 0.001)
+    const distance = (radius / Math.tan((camera.fov * Math.PI) / 360)) * 2.2
+    controls.target.copy(center)
+    camera.position.copy(center).add(new THREE.Vector3(distance * 0.7, distance * 0.5, distance * 0.7))
+    camera.updateProjectionMatrix()
+    controls.update()
+    return
+  }
+
+  const bone = boneObjects.get(id)
   if (bone) {
-    highlightBone(bone)
     const world = new THREE.Vector3()
     bone.getWorldPosition(world)
     const distance = Math.max(modelRadius * 0.6, 0.2)
@@ -682,6 +706,7 @@ defineExpose({
   resetView,
   screenshot,
   setPartVisible,
+  selectNode,
   focusNode,
   playClip,
   pauseClip,
