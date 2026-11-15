@@ -107,6 +107,31 @@ function handleEditState(state: ClipEditState): void {
   }
 }
 
+/* ------------------------------ 撤销 / 重做 ------------------------------ */
+const historyState = ref({ undo: 0, redo: 0 })
+
+function handleHistoryState(state: { undo: number; redo: number }): void {
+  historyState.value = state
+}
+
+function undoEdit(): void {
+  const result = viewer.value?.undo()
+  if (!result?.ok) {
+    ElMessage.info('没有可撤销的操作')
+    return
+  }
+  ElMessage.success(`已撤销：${result.label ?? ''}`)
+}
+
+function redoEdit(): void {
+  const result = viewer.value?.redo()
+  if (!result?.ok) {
+    ElMessage.info('没有可恢复的操作')
+    return
+  }
+  ElMessage.success(`已恢复：${result.label ?? ''}`)
+}
+
 /** 精修模式下当前帧 / 总帧 */
 const editFrame = computed(() => {
   const fps = editState.value?.fps ?? 30
@@ -266,9 +291,24 @@ onMounted(async () => {
 
 // 精修快捷键：← / → 逐帧，K 记帧，空格播放暂停
 function onEditKey(event: KeyboardEvent): void {
-  if (!editing.value) return
   const tag = (event.target as HTMLElement | null)?.tagName ?? ''
   if (tag === 'INPUT' || tag === 'TEXTAREA' || (event.target as HTMLElement | null)?.isContentEditable) return
+
+  // Ctrl/⌘ + Z 撤销，Ctrl/⌘ + Y 或 Shift+Ctrl/⌘+Z 恢复
+  const mod = event.ctrlKey || event.metaKey
+  if (mod && (event.key === 'z' || event.key === 'Z')) {
+    event.preventDefault()
+    if (event.shiftKey) redoEdit()
+    else undoEdit()
+    return
+  }
+  if (mod && (event.key === 'y' || event.key === 'Y')) {
+    event.preventDefault()
+    redoEdit()
+    return
+  }
+
+  if (!editing.value) return
   if (event.key === 'ArrowLeft') {
     event.preventDefault()
     stepFrame(-1)
@@ -927,6 +967,7 @@ async function reveal(): Promise<void> {
             @tick="handleTick"
             @bone-transform="handleBoneTransform"
             @edit-state="handleEditState"
+            @history-state="handleHistoryState"
             @error="errorText = $event"
           />
           <div v-else v-loading="loading" class="lab__placeholder">
@@ -1252,7 +1293,27 @@ async function reveal(): Promise<void> {
         </section>
 
         <section v-if="selectedBoneId" class="block">
-          <h3 class="block__title">编辑骨骼</h3>
+          <h3 class="block__title">
+            编辑骨骼
+            <span class="block__actions">
+              <el-tooltip content="撤销 (Ctrl+Z)" placement="top">
+                <el-button
+                  size="small"
+                  :icon="RefreshLeft"
+                  :disabled="historyState.undo === 0"
+                  @click="undoEdit"
+                />
+              </el-tooltip>
+              <el-tooltip content="恢复 (Ctrl+Y)" placement="top">
+                <el-button
+                  size="small"
+                  :icon="RefreshRight"
+                  :disabled="historyState.redo === 0"
+                  @click="redoEdit"
+                />
+              </el-tooltip>
+            </span>
+          </h3>
           <el-radio-group v-model="gizmoMode" size="small" class="edit-modes">
             <el-radio-button value="rotate">旋转</el-radio-button>
             <el-radio-button value="translate">移动</el-radio-button>
@@ -1506,6 +1567,19 @@ async function reveal(): Promise<void> {
 .edit-vec__input :deep(.el-input__inner) {
   font-size: 11px;
   text-align: right;
+}
+
+.block__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.block__actions :deep(.el-button) {
+  height: 22px;
+  width: 24px;
+  padding: 0;
 }
 
 .edit-actions {

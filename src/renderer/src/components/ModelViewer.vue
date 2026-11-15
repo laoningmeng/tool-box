@@ -77,6 +77,8 @@ const emit = defineEmits<{
   ]
   /** 精修会话状态变化 */
   'edit-state': [state: ClipEditState]
+  /** 撤销/重做栈变化 */
+  'history-state': [state: { undo: number; redo: number }]
   error: [message: string]
 }>()
 
@@ -503,6 +505,7 @@ function setBoneTransform(
 ): void {
   const bone = boneObjects.get(id)
   if (!bone) return
+  pushHistory('修改骨骼')
   stopAnimationForEdit()
 
   if (patch.position) {
@@ -530,6 +533,7 @@ function resetBone(id: string): void {
   const bone = boneObjects.get(id)
   const rest = initialLocal.get(id)
   if (!bone || !rest) return
+  pushHistory('复位骨骼')
   stopAnimationForEdit()
   bone.position.copy(rest.position)
   bone.quaternion.copy(rest.quaternion)
@@ -540,6 +544,7 @@ function resetBone(id: string): void {
 }
 
 function resetPose(): void {
+  pushHistory('复位姿态')
   stopAnimationForEdit()
   for (const [id, bone] of boneObjects) {
     const rest = initialLocal.get(id)
@@ -762,6 +767,7 @@ function beginEdit(options: {
   }
   editTime = 0
   editPlaying = false
+  resetHistory()
   sampleEditTracks(0)
   emitEditState()
   emitEditTick()
@@ -820,6 +826,7 @@ function setKey(track: EditTrack, time: number, quat: THREE.Quaternion): void {
 function recordKey(): { ok: boolean; message?: string } {
   if (!editSession) return { ok: false, message: '当前不在精修模式' }
   if (!selectedBone || !selectedBone.name) return { ok: false, message: '先选中一根骨骼' }
+  pushHistory('记录关键帧')
   const name = selectedBone.name
   let track = editSession.tracks.get(name)
   if (!track) {
@@ -835,6 +842,7 @@ function recordKey(): { ok: boolean; message?: string } {
 /** 记录整帧：所有已有轨道的骨骼都在当前时间打一帧 */
 function recordAllKeys(): { ok: boolean; count: number } {
   if (!editSession) return { ok: false, count: 0 }
+  pushHistory('记录整帧')
   let count = 0
   for (const [boneName, track] of editSession.tracks) {
     const bone = boneByName.get(boneName)
@@ -856,6 +864,7 @@ function deleteKey(): { ok: boolean; message?: string } {
   const epsilon = 1 / 240
   const index = track.times.findIndex((value) => Math.abs(value - editTime) < epsilon)
   if (index < 0) return { ok: false, message: '当前帧没有关键帧' }
+  pushHistory('删除关键帧')
   track.times.splice(index, 1)
   track.quats.splice(index, 1)
   editSession.dirty = true
@@ -898,6 +907,116 @@ function playStoredAction(action: ModelAction): { ok: boolean; message?: string 
   const clip = new THREE.AnimationClip(action.name, action.duration, tracks)
   playAnimationClip(clip, action.loop)
   return { ok: true }
+}
+
+/* ------------------------------- 撤销 / 重做 ------------------------------- */
+
+interface PoseSnapshot {
+  label: string
+  bones: Map<
+    string,
+    {
+      position: [number, number, number]
+      quaternion: [number, number, number, number]
+      scale: [number, number, number]
+    }
+  >
+  tracks?: Map<string, EditTrack>
+}
+
+const HISTORY_LIMIT = 60
+const undoStack: PoseSnapshot[] = []
+const redoStack: PoseSnapshot[] = []
+
+function emitHistoryState(): void {
+  emit('history-state', { undo: undoStack.length, redo: redoStack.length })
+}
+
+function cloneTracks(tracks: Map<string, EditTrack>): Map<string, EditTrack> {
+  const copy = new Map<string, EditTrack>()
+  for (const [bone, track] of tracks) {
+    copy.set(bone, { times: [...track.times], quats: track.quats.map((quat) => quat.clone()) })
+  }
+  return copy
+}
+
+function captureSnapshot(label: string): PoseSnapshot {
+  const bones = new Map<
+    string,
+    {
+      position: [number, number, number]
+      quaternion: [number, number, number, number]
+      scale: [number, number, number]
+    }
+  >()
+  for (const [id, bone] of boneObjects) {
+    const name = bone.name || id
+    bones.set(name, {
+      position: [bone.position.x, bone.position.y, bone.position.z],
+      quaternion: [bone.quaternion.x, bone.quaternion.y, bone.quaternion.z, bone.quaternion.w],
+      scale: [bone.scale.x, bone.scale.y, bone.scale.z]
+    })
+  }
+  return {
+    label,
+    bones,
+    tracks: editSession ? cloneTracks(editSession.tracks) : undefined
+  }
+}
+
+function applySnapshot(snapshot: PoseSnapshot): void {
+  for (const [name, value] of snapshot.bones) {
+    const bone = boneByName.get(name)
+    if (!bone) continue
+    bone.position.set(value.position[0], value.position[1], value.position[2])
+    bone.quaternion.set(value.quaternion[0], value.quaternion[1], value.quaternion[2], value.quaternion[3])
+    bone.scale.set(value.scale[0], value.scale[1], value.scale[2])
+  }
+  if (editSession && snapshot.tracks) {
+    editSession.tracks = cloneTracks(snapshot.tracks)
+    editSession.dirty = true
+    sampleEditTracks(editTime)
+  } else if (current) {
+    current.updateMatrixWorld(true)
+  }
+  if (boneOverlay) updateSkeletonOverlay()
+  emitBoneTransform()
+  if (editSession) emitEditState()
+}
+
+/** 记录一步历史（在真正修改之前调用） */
+function pushHistory(label: string): void {
+  if (boneObjects.size === 0) return
+  undoStack.push(captureSnapshot(label))
+  if (undoStack.length > HISTORY_LIMIT) undoStack.shift()
+  redoStack.length = 0
+  emitHistoryState()
+}
+
+function resetHistory(): void {
+  undoStack.length = 0
+  redoStack.length = 0
+  emitHistoryState()
+}
+
+function undo(): { ok: boolean; label?: string } {
+  const snapshot = undoStack.pop()
+  if (!snapshot) return { ok: false }
+  redoStack.push(captureSnapshot(snapshot.label))
+  if (redoStack.length > HISTORY_LIMIT) redoStack.shift()
+  applySnapshot(snapshot)
+  emitHistoryState()
+  return { ok: true, label: snapshot.label }
+}
+
+function redo(): { ok: boolean; label?: string } {
+  const snapshot = redoStack.pop()
+  if (!snapshot) return { ok: false }
+  undoStack.push(captureSnapshot(snapshot.label))
+  if (undoStack.length > HISTORY_LIMIT) undoStack.shift()
+  applySnapshot(snapshot)
+  emitHistoryState()
+  return { ok: true, label: snapshot.label }
 }
 
 /* ------------------------------- 相机与网格 ------------------------------- */
@@ -1149,6 +1268,7 @@ function clearModel(): void {
   editSession = null
   editPlaying = false
   editTime = 0
+  resetHistory()
   disposeSkeletonOverlay()
   if (mixer) {
     mixer.stopAllAction()
@@ -1518,7 +1638,10 @@ onMounted(() => {
   gizmo.addEventListener('dragging-changed', (event) => {
     const dragging = Boolean((event as unknown as { value: boolean }).value)
     if (controls) controls.enabled = !dragging
-    if (dragging) stopAnimationForEdit()
+    if (dragging) {
+      pushHistory('拖动骨骼')
+      stopAnimationForEdit()
+    }
   })
   gizmo.addEventListener('objectChange', () => {
     emitBoneTransform()
@@ -1652,6 +1775,8 @@ defineExpose({
   deleteKey,
   getEditResult,
   playStoredAction,
+  undo,
+  redo,
   focusNode,
   playClip,
   pauseClip,
