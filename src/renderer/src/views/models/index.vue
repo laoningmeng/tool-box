@@ -16,13 +16,6 @@ import { formatBytes, formatDateTime } from '@renderer/utils/format'
 const store = useModelStore()
 const { items, summary, loading, importing, keyword, source, format, hasFilters } = storeToRefs(store)
 
-const stats = computed(() => [
-  { label: '模型总数', value: summary.value?.total ?? 0 },
-  { label: 'Tripo', value: summary.value?.bySource.tripo ?? 0 },
-  { label: 'Meshy', value: summary.value?.bySource.meshy ?? 0 },
-  { label: 'Blender', value: summary.value?.bySource.blender ?? 0 }
-])
-
 const totalSize = computed(() => formatBytes(summary.value?.bytes ?? 0))
 
 onMounted(() => {
@@ -125,22 +118,11 @@ async function handleSearch(): Promise<void> {
           模型列表
           <span class="chip">{{ summary?.total ?? 0 }} 个</span>
         </h1>
-        <p class="page-desc">
-          登记从 Tripo、Meshy、Blender 导出的 3D 模型文件（glb / gltf / fbx / obj / blend）。
-          模型库只记录路径与元信息，不复制文件；移除也只是出库。
-        </p>
       </div>
       <el-button type="primary" :icon="Upload" :loading="importing" @click="handleImport">
         导入模型
       </el-button>
     </header>
-
-    <section class="stat-grid">
-      <article v-for="item in stats" :key="item.label" class="stat-card">
-        <span class="stat-card__label">{{ item.label }}</span>
-        <strong class="stat-card__value num">{{ item.value }}</strong>
-      </article>
-    </section>
 
     <section class="panel">
       <header class="panel__head">
@@ -278,34 +260,6 @@ async function handleSearch(): Promise<void> {
 </template>
 
 <style scoped>
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.stat-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 18px 20px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-color);
-  background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
-}
-
-.stat-card__label {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-}
-
-.stat-card__value {
-  font-size: 26px;
-  font-weight: 650;
-  color: var(--text-primary);
-}
-
 .toolbar {
   display: flex;
   align-items: center;
@@ -354,10 +308,6 @@ async function handleSearch(): Promise<void> {
 }
 
 @media (max-width: 1100px) {
-  .stat-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .toolbar__search,
   .toolbar__select {
     width: 100%;
