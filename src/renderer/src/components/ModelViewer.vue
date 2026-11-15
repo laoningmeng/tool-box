@@ -13,6 +13,7 @@ import { ROLE_LABELS } from '../rig/types'
 import type { ActionKind, BoneRole, PoseClip, RigInfo, SemanticRig } from '../rig/types'
 import type {
   ClipEditState,
+  QuickPoseAction,
   SemanticSummary,
   ViewerBone,
   ViewerClip,
@@ -1060,6 +1061,168 @@ function applyFreezeMesh(freeze: boolean): void {
   }
 }
 
+/* ------------------------------- 快捷姿态 ------------------------------- */
+
+
+const QUICK_POSE_LABEL: Record<QuickPoseAction, string> = {
+  'legs-in': '双腿内收',
+  'legs-out': '双腿外展',
+  'legs-forward': '双腿前摆',
+  'legs-back': '双腿后摆',
+  'arms-in': '双臂内收',
+  'arms-out': '双臂外展',
+  'arms-forward': '双臂前摆',
+  'arms-back': '双臂后摆',
+  'head-down': '低头',
+  'head-up': '抬头',
+  'lean-forward': '身体前倾',
+  'lean-back': '身体后仰',
+  reset: '重置姿态'
+}
+
+/** 绕世界轴旋转某根骨骼（换算到父空间后 premultiply，保持骨骼自身朝向不跑） */
+function applyWorldDelta(bone: THREE.Bone, axis: THREE.Vector3, degrees: number): void {
+  const parentWorld = new THREE.Quaternion()
+  if (bone.parent) bone.parent.getWorldQuaternion(parentWorld)
+  const rotation = new THREE.Quaternion().setFromAxisAngle(axis, THREE.MathUtils.degToRad(degrees))
+  const localDelta = parentWorld.clone().invert().multiply(rotation).multiply(parentWorld)
+  bone.quaternion.premultiply(localDelta)
+  bone.updateMatrixWorld(true)
+}
+
+/** 骨骼在世界空间里的指向（头 -> 第一个子骨骼；末端骨用本地 +Y 估算） */
+function boneDirection(bone: THREE.Bone): THREE.Vector3 {
+  const head = new THREE.Vector3()
+  bone.getWorldPosition(head)
+  for (const child of bone.children) {
+    if ((child as THREE.Bone).isBone) {
+      const tail = new THREE.Vector3()
+      child.getWorldPosition(tail)
+      return tail.sub(head).normalize()
+    }
+  }
+  const quat = new THREE.Quaternion()
+  bone.getWorldQuaternion(quat)
+  return new THREE.Vector3(0, 1, 0).applyQuaternion(quat).normalize()
+}
+
+/**
+ * 内收 / 外展：把骨骼朝（或背离）身体中轴方向转。
+ * 旋转轴取「骨骼方向 × 指向中轴方向」，所以手臂朝前、朝下、朝侧面都能正确收拢。
+ */
+function rotateTowardBody(bone: THREE.Bone, inward: boolean, step: number): boolean {
+  if (!rigInfo) return false
+  const roleMap = roleBoneMap(semanticRig!)
+  const hipsName = roleMap.get('hips')
+  const hipsBone = hipsName ? boneByName.get(hipsName) : null
+  const head = new THREE.Vector3()
+  bone.getWorldPosition(head)
+  const hipsHead = new THREE.Vector3()
+  if (hipsBone) hipsBone.getWorldPosition(hipsHead)
+  else hipsHead.copy(head)
+
+  const up = rigInfo.up
+  const heightOffset = head.clone().sub(hipsHead).dot(up)
+  const axisPoint = hipsHead.clone().add(up.clone().multiplyScalar(heightOffset))
+  const towardCenter = axisPoint.sub(head)
+  if (towardCenter.lengthSq() < 1e-8) return false
+
+  const direction = boneDirection(bone)
+  const axis = new THREE.Vector3().crossVectors(direction, towardCenter)
+  if (axis.lengthSq() < 1e-8) return false
+  axis.normalize()
+  applyWorldDelta(bone, axis, inward ? step : -step)
+  return true
+}
+
+/**
+ * 一键姿态微调：按语义角色找骨骼，绕世界轴转固定角度。
+ * 左右对称的动作用 lateralSign 决定正负，所以不依赖模型朝 +Z。
+ */
+function quickPose(action: QuickPoseAction, step = 12): { ok: boolean; message?: string } {
+  if (action === 'reset') {
+    resetPose()
+    return { ok: true }
+  }
+  if (!semanticRig || !rigInfo) return { ok: false, message: '该模型没有可用骨骼' }
+  const rig = rigInfo
+  const roleMap = roleBoneMap(semanticRig)
+  const forward = rig.forward.clone().normalize()
+  const right = rig.right.clone().normalize()
+  const label = QUICK_POSE_LABEL[action] ?? action
+
+  const rotate = (role: BoneRole, axis: THREE.Vector3, degrees: number): boolean => {
+    const name = roleMap.get(role)
+    if (!name) return false
+    const bone = boneByName.get(name)
+    if (!bone) return false
+    applyWorldDelta(bone, axis, degrees)
+    return true
+  }
+  /** 内收 / 外展：朝身体中轴转（左右各自算轴） */
+  const rotateToward = (roles: [BoneRole, BoneRole], inward: boolean): number => {
+    let moved = 0
+    for (const role of roles) {
+      const name = roleMap.get(role)
+      if (!name) continue
+      const bone = boneByName.get(name)
+      if (!bone) continue
+      if (rotateTowardBody(bone, inward, step)) moved += 1
+    }
+    return moved
+  }
+
+  pushHistory(`快捷姿态 · ${label}`)
+  let moved = 0
+  switch (action) {
+    case 'legs-in':
+      moved = rotateToward(['thigh_L', 'thigh_R'], true)
+      break
+    case 'legs-out':
+      moved = rotateToward(['thigh_L', 'thigh_R'], false)
+      break
+    case 'legs-forward':
+      moved = Number(rotate('thigh_L', right, -step)) + Number(rotate('thigh_R', right, -step))
+      break
+    case 'legs-back':
+      moved = Number(rotate('thigh_L', right, step)) + Number(rotate('thigh_R', right, step))
+      break
+    case 'arms-in':
+      moved = rotateToward(['upperArm_L', 'upperArm_R'], true)
+      break
+    case 'arms-out':
+      moved = rotateToward(['upperArm_L', 'upperArm_R'], false)
+      break
+    case 'arms-forward':
+      moved = Number(rotate('upperArm_L', right, -step)) + Number(rotate('upperArm_R', right, -step))
+      break
+    case 'arms-back':
+      moved = Number(rotate('upperArm_L', right, step)) + Number(rotate('upperArm_R', right, step))
+      break
+    case 'head-down':
+      moved = Number(rotate('head', right, step))
+      break
+    case 'head-up':
+      moved = Number(rotate('head', right, -step))
+      break
+    case 'lean-forward':
+      moved = Number(rotate('spine', right, step * 0.6)) + Number(rotate('chest', right, step * 0.4))
+      break
+    case 'lean-back':
+      moved = Number(rotate('spine', right, -step * 0.6)) + Number(rotate('chest', right, -step * 0.4))
+      break
+  }
+
+  if (moved === 0) {
+    return { ok: false, message: '该模型没识别到对应骨骼（可先看骨架页签的角色标签）' }
+  }
+  if (current) current.updateMatrixWorld(true)
+  if (boneOverlay) updateSkeletonOverlay()
+  emitBoneTransform()
+  if (editSession) emitEditState()
+  return { ok: true }
+}
+
 /* ------------------------------- 相机与网格 ------------------------------- */
 
 function frameObject(object: THREE.Object3D, padding = 1.35): void {
@@ -1827,6 +1990,7 @@ defineExpose({
   playStoredAction,
   undo,
   redo,
+  quickPose,
   focusNode,
   playClip,
   pauseClip,

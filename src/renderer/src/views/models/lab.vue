@@ -32,7 +32,7 @@ import { useModelStore } from '@renderer/stores/models'
 import { useAppStore } from '@renderer/stores/app'
 import { formatBytes, formatDateTime } from '@renderer/utils/format'
 import ModelViewer from '@renderer/components/ModelViewer.vue'
-import type { ClipEditState, SemanticSummary, ViewerStructure } from '@renderer/components/model-viewer-types'
+import type { ClipEditState, QuickPoseAction, SemanticSummary, ViewerStructure } from '@renderer/components/model-viewer-types'
 import { ACTION_LIBRARY } from '@renderer/rig/actions'
 import type { ActionKind } from '@renderer/rig/types'
 import type { ModelAction } from '@shared/types'
@@ -132,6 +132,29 @@ function redoEdit(): void {
     return
   }
   ElMessage.success(`已恢复：${result.label ?? ''}`)
+}
+
+/** 快捷姿态：每次点击转 12° */
+const QUICK_POSES: Array<{ action: QuickPoseAction; label: string }> = [
+  { action: 'legs-in', label: '双腿内收' },
+  { action: 'legs-out', label: '双腿外展' },
+  { action: 'legs-forward', label: '双腿前摆' },
+  { action: 'legs-back', label: '双腿后摆' },
+  { action: 'arms-in', label: '双臂内收' },
+  { action: 'arms-out', label: '双臂外展' },
+  { action: 'arms-forward', label: '双臂前摆' },
+  { action: 'arms-back', label: '双臂后摆' },
+  { action: 'head-down', label: '低头' },
+  { action: 'head-up', label: '抬头' },
+  { action: 'lean-forward', label: '身体前倾' },
+  { action: 'lean-back', label: '身体后仰' }
+]
+
+function applyQuickPose(action: QuickPoseAction): void {
+  const result = viewer.value?.quickPose(action)
+  if (!result?.ok) {
+    ElMessage.warning(result?.message ?? '该动作不可用')
+  }
 }
 
 /** 精修模式下当前帧 / 总帧 */
@@ -1314,6 +1337,24 @@ async function reveal(): Promise<void> {
           </div>
         </section>
 
+        <section v-if="structure?.bones.length" class="block">
+          <h3 class="block__title">快捷姿态</h3>
+          <div class="quick-grid">
+            <el-button
+              v-for="item in QUICK_POSES"
+              :key="item.action"
+              size="small"
+              @click="applyQuickPose(item.action)"
+            >
+              {{ item.label }}
+            </el-button>
+            <el-button size="small" type="primary" plain @click="applyQuickPose('reset')">
+              重置姿态
+            </el-button>
+          </div>
+          <p class="block__hint">每次点击 ±12°，可反复点击叠加；Ctrl+Z 可撤销</p>
+        </section>
+
         <section v-if="selectedBoneId" class="block">
           <h3 class="block__title">
             编辑骨骼
@@ -1589,6 +1630,18 @@ async function reveal(): Promise<void> {
 .edit-vec__input :deep(.el-input__inner) {
   font-size: 11px;
   text-align: right;
+}
+
+.quick-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.quick-grid :deep(.el-button) {
+  margin-left: 0;
+  padding: 0 4px;
+  font-size: 11.5px;
 }
 
 .block__actions {

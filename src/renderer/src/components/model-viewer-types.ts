@@ -62,3 +62,19 @@ export interface ClipEditState {
   boneKeys: number[]
   dirty: boolean
 }
+
+/** 快捷姿态动作 */
+export type QuickPoseAction =
+  | 'legs-in'
+  | 'legs-out'
+  | 'legs-forward'
+  | 'legs-back'
+  | 'arms-in'
+  | 'arms-out'
+  | 'arms-forward'
+  | 'arms-back'
+  | 'head-down'
+  | 'head-up'
+  | 'lean-forward'
+  | 'lean-back'
+  | 'reset'
