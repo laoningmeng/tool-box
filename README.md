@@ -209,3 +209,11 @@ npm install
 **打包成安装包**
 
 `build/icon.ico`（256×256）放好后取消 `electron-builder.yml` 里 `win.icon` 的注释，再执行 `npm run dist`。
+---
+
+## 许可
+
+[MIT](LICENSE) © laoningmeng
+
+项目里的模型样例与第三方素材版权归各自作者所有。`runtime/python` 为首次运行 `scripts/setup-python.ps1` 时下载的
+python-build-standalone 运行时，不随仓库分发。
