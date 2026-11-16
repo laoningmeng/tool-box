@@ -50,6 +50,7 @@ import {
   getModelConfigView,
   importModels,
   listModels,
+  pickActionFiles,
   pickImportDir,
   readModelFile,
   removeModel,
@@ -298,6 +299,9 @@ export function registerIpc(): void {
   )
   ipcMain.handle(IPC.model.setPartNote, (_event, modelId: string, partKey: string, note: string) =>
     setModelPartNote(modelId, partKey, note)
+  )
+  ipcMain.handle(IPC.model.pickActionFiles, (event) =>
+    pickActionFiles(BrowserWindow.fromWebContents(event.sender))
   )
   ipcMain.handle(
     IPC.model.exportGroup,

@@ -308,6 +308,12 @@ export interface ModelAction {
   createdAt: string
 }
 
+/** 外部动作文件（Mixamo FBX / glb），主进程读字节交给渲染层解析 */
+export interface ActionAssetFile {
+  name: string
+  bytes: Uint8Array
+}
+
 export interface ModelActionInput {
   name: string
   duration: number
@@ -415,6 +421,8 @@ export interface ModelApi {
   removeAction(modelId: string, actionId: string): Promise<{ ok: boolean }>
   /** 保存部件备注（空字符串 = 清除），返回该模型最新的备注表 */
   setPartNote(modelId: string, partKey: string, note: string): Promise<Record<string, string>>
+  /** 选择并读取外部动作文件（.fbx / .glb / .gltf） */
+  pickActionFiles(): Promise<ActionAssetFile[]>
   /**
    * 导出一组部件为 glb 文件，并自动登记进模型库。
    * 不传 targetPath 时弹保存对话框（自动化测试可直接给路径）。

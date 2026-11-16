@@ -24,6 +24,7 @@ import {
   Search,
   Share,
   Unlock,
+  Upload,
   VideoPause,
   VideoPlay,
   View
@@ -788,6 +789,69 @@ function startEditSaved(action: ModelAction): void {
     }),
     action.name
   )
+}
+
+/* ------------------------------ 外部动作（Mixamo） ------------------------------ */
+const externalActions = ref<Array<{ name: string; duration: number; matched: number }>>([])
+const importingActions = ref(false)
+const bindingExternalIndex = ref(-1)
+
+async function pickExternalActions(): Promise<void> {
+  if (!viewer.value) return
+  let files: Awaited<ReturnType<typeof window.api.model.pickActionFiles>> = []
+  try {
+    files = await window.api.model.pickActionFiles()
+  } catch (error) {
+    ElMessage.error(`打开文件失败：${(error as Error).message}`)
+    return
+  }
+  if (files.length === 0) return
+  importingActions.value = true
+  try {
+    const result = await viewer.value.importExternalActions(files)
+    if (!result?.ok) {
+      ElMessage.warning(result?.message ?? '没有可用动作')
+      return
+    }
+    externalActions.value = result.items
+    if (result.message) ElMessage.warning(result.message)
+    ElMessage.success(`已导入 ${result.items.length} 个动作`)
+  } catch (error) {
+    ElMessage.error(`导入失败：${(error as Error).message}`)
+  } finally {
+    importingActions.value = false
+  }
+}
+
+function playExternal(index: number): void {
+  const result = viewer.value?.playExternalAction(index)
+  if (!result?.ok) {
+    ElMessage.warning(result?.message ?? '播放失败')
+    return
+  }
+  libraryKind.value = ''
+  clipIndex.value = -1
+  playing.value = true
+  ElMessage.success(`播放：${externalActions.value[index]?.name ?? '外部动作'}`)
+}
+
+async function bindExternal(index: number): Promise<void> {
+  const payload = viewer.value?.getExternalAction(index)
+  if (!payload) {
+    ElMessage.warning('该动作不可用')
+    return
+  }
+  bindingExternalIndex.value = index
+  try {
+    const saved = await window.api.model.saveAction(modelId.value, payload)
+    const list = await window.api.model.list()
+    model.value = list.find((item) => item.id === modelId.value) ?? model.value
+    ElMessage.success(`已绑定动作：${saved.name}`)
+  } catch (error) {
+    ElMessage.error(`绑定失败：${(error as Error).message}`)
+  } finally {
+    bindingExternalIndex.value = -1
+  }
 }
 
 async function saveEdit(): Promise<void> {
@@ -2043,6 +2107,35 @@ async function reveal(): Promise<void> {
               </button>
             </div>
           </template>
+
+          <div class="external-block">
+            <el-button size="small" :icon="Upload" :loading="importingActions" @click="pickExternalActions">
+              导入外部动作（FBX / GLB）
+            </el-button>
+            <p class="block__hint">
+              Mixamo 下载的 FBX 可直接导入：按骨骼语义自动重定向到当前模型，只在本机处理
+            </p>
+            <div v-if="externalActions.length" class="clip-list external-list">
+              <div v-for="(item, index) in externalActions" :key="item.name + index" class="clip-row">
+                <button type="button" class="clip" @click="playExternal(index)">
+                  <el-icon class="clip__icon"><VideoPlay /></el-icon>
+                  <span class="clip__name" :title="item.name">{{ item.name }}</span>
+                  <span class="clip__time num">{{ item.duration.toFixed(2) }}s</span>
+                </button>
+                <el-tooltip content="绑定到模型（保存为已绑定动作）" placement="left">
+                  <el-button
+                    class="clip-row__btn"
+                    size="small"
+                    type="primary"
+                    plain
+                    :icon="Download"
+                    :loading="bindingExternalIndex === index"
+                    @click.stop="bindExternal(index)"
+                  />
+                </el-tooltip>
+              </div>
+            </div>
+          </div>
         </PanelSection>
         </div>
 
@@ -2490,6 +2583,24 @@ async function reveal(): Promise<void> {
   color: var(--accent);
   flex: none;
   white-space: nowrap;
+}
+
+.external-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-color);
+}
+
+.external-block :deep(.el-button) {
+  align-self: flex-start;
+}
+
+.external-list {
+  max-height: 160px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .library-grid {

@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { buildRig, collectSkinnedMeshes, lateralSign } from '../rig/rig'
@@ -20,7 +21,9 @@ import type {
   ViewerPart,
   ViewerStructure
 } from './model-viewer-types'
-import type { ModelAction, ModelActionInput, ModelActionTrack } from '@shared/types'
+import { retargetClip } from '../rig/retarget'
+import type { RetargetResult, RetargetTarget } from '../rig/retarget'
+import type { ActionAssetFile, ModelAction, ModelActionInput, ModelActionTrack } from '@shared/types'
 
 /**
  * 3D 预览 / 实验台画布（three.js）。
@@ -582,6 +585,129 @@ function resetPose(): void {
   if (current) current.updateMatrixWorld(true)
   emitBoneTransform()
   if (boneOverlay) updateSkeletonOverlay()
+}
+
+/* ------------------------------- 外部动作（Mixamo FBX / glb） ------------------------------- */
+
+let externalActions: RetargetResult[] = []
+
+/** 把模型骨骼按角色整成重定向目标 */
+function buildRetargetTarget(): RetargetTarget | null {
+  if (!rigInfo || !semanticRig) return null
+  const roleMap = roleBoneMap(semanticRig)
+  const boneByRole = new Map<BoneRole, THREE.Bone>()
+  for (const [role, name] of roleMap) {
+    const bone = boneByName.get(name)
+    if (bone) boneByRole.set(role, bone)
+  }
+  return {
+    boneByRole,
+    restWorldQuat: (bone: THREE.Bone) => {
+      const index = rigInfo!.boneIndexByName.get(bone.name)
+      return index === undefined ? new THREE.Quaternion() : rigInfo!.restWorldQuat[index].clone()
+    }
+  }
+}
+
+async function parseActionFile(file: ActionAssetFile): Promise<{ root: THREE.Object3D; animations: THREE.AnimationClip[] }> {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  const buffer = file.bytes.buffer.slice(
+    file.bytes.byteOffset,
+    file.bytes.byteOffset + file.bytes.byteLength
+  ) as ArrayBuffer
+  if (ext === 'fbx') {
+    const object = new FBXLoader().parse(buffer, '')
+    return { root: object, animations: object.animations ?? [] }
+  }
+  const gltf = await new GLTFLoader().parseAsync(buffer, '')
+  return { root: gltf.scene, animations: gltf.animations ?? [] }
+}
+
+/** 解析外部动作文件并按语义角色重定向到当前模型 */
+async function importExternalActions(
+  files: ActionAssetFile[]
+): Promise<{ ok: boolean; message?: string; items: Array<{ name: string; duration: number; matched: number }> }> {
+  const target = buildRetargetTarget()
+  if (!target) return { ok: false, message: '该模型没有可用骨骼，无法套用外部动作', items: [] }
+  const items: RetargetResult[] = []
+  const failures: string[] = []
+  for (const file of files) {
+    try {
+      const { root, animations } = await parseActionFile(file)
+      if (animations.length === 0) {
+        failures.push(`${file.name}：没有动画数据`)
+        continue
+      }
+      const baseName = file.name.replace(/\.[^.]+$/, '')
+      for (const clip of animations) {
+        const result = retargetClip(root, clip, target, {
+          name: (clip.name || baseName).slice(0, 40)
+        })
+        if (result) items.push(result)
+        else failures.push(`${file.name} / ${clip.name || '未命名'}：骨骼对不上`)
+      }
+    } catch (error) {
+      failures.push(`${file.name}：${(error as Error).message}`)
+    }
+  }
+  if (items.length === 0) {
+    return { ok: false, message: failures[0] ?? '没有解析到可用动作', items: [] }
+  }
+  externalActions = items
+  return {
+    ok: true,
+    items: items.map((item) => ({ name: item.name, duration: item.duration, matched: item.matched })),
+    message: failures.length > 0 ? `${failures.length} 个文件被跳过：${failures[0]}` : undefined
+  }
+}
+
+function externalToAnimationClip(index: number): THREE.AnimationClip | null {
+  const item = externalActions[index]
+  if (!item) return null
+  const tracks: THREE.KeyframeTrack[] = []
+  for (const track of item.tracks) {
+    const bone = boneByName.get(track.bone)
+    if (!bone) continue
+    tracks.push(new THREE.QuaternionKeyframeTrack(`${bone.uuid}.quaternion`, track.times, track.quats))
+  }
+  if (tracks.length === 0) return null
+  return new THREE.AnimationClip(item.name, item.duration, tracks)
+}
+
+/** 播放导入的外部动作（先回到绑定姿态，避免和当前姿势叠在一起） */
+function playExternalAction(index: number): { ok: boolean; message?: string } {
+  const clip = externalToAnimationClip(index)
+  if (!clip) return { ok: false, message: '该动作不可用' }
+  for (const [id, bone] of boneObjects) {
+    const rest = initialLocal.get(id)
+    if (!rest) continue
+    bone.position.copy(rest.position)
+    bone.quaternion.copy(rest.quaternion)
+    bone.scale.copy(rest.scale)
+  }
+  if (current) current.updateMatrixWorld(true)
+  if (boneOverlay) updateSkeletonOverlay()
+  playAnimationClip(clip, true)
+  return { ok: true }
+}
+
+/** 取外部动作的轨道，交给主进程绑定到模型 */
+function getExternalAction(index: number): ModelActionInput | null {
+  const item = externalActions[index]
+  if (!item) return null
+  return {
+    name: item.name.slice(0, 40),
+    duration: item.duration,
+    loop: true,
+    fps: item.fps,
+    origin: 'custom',
+    tracks: item.tracks.map((track) => ({ ...track, times: [...track.times], quats: [...track.quats] })),
+    edited: false
+  }
+}
+
+function clearExternalActions(): void {
+  externalActions = []
 }
 
 /* ------------------------------- 动作精修 ------------------------------- */
@@ -2199,6 +2325,10 @@ defineExpose({
   playStoredAction,
   undo,
   redo,
+  importExternalActions,
+  playExternalAction,
+  getExternalAction,
+  clearExternalActions,
   beginQuickPose,
   setQuickPoseAmount,
   endQuickPose,

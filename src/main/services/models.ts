@@ -455,6 +455,32 @@ export function saveModelConfig(patch: ModelConfigPatch): ModelConfigView {
   return getModelConfigView()
 }
 
+/** 选择外部动作文件（Mixamo FBX / glb），读成字节交给渲染层解析与重定向 */
+export async function pickActionFiles(
+  win: BrowserWindow | null
+): Promise<Array<{ name: string; bytes: Uint8Array }>> {
+  const options: Electron.OpenDialogOptions = {
+    title: '导入外部动作（Mixamo FBX / glb）',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: '动作文件', extensions: ['fbx', 'glb', 'gltf'] }]
+  }
+  const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+  if (result.canceled || result.filePaths.length === 0) return []
+  const files: Array<{ name: string; bytes: Uint8Array }> = []
+  for (const filePath of result.filePaths.slice(0, 20)) {
+    try {
+      const stat = await fs.promises.stat(filePath)
+      // 单个动作文件限制 40MB，避免把整个动作包一次性读进来
+      if (!stat.isFile() || stat.size > 40 * 1024 * 1024) continue
+      const bytes = await fs.promises.readFile(filePath)
+      files.push({ name: path.basename(filePath), bytes })
+    } catch {
+      // 跳过读不了的文件
+    }
+  }
+  return files
+}
+
 export async function pickImportDir(win: BrowserWindow | null): Promise<string | null> {
   const current = getDb().modelConfig.defaultImportDir
   const options: Electron.OpenDialogOptions = {

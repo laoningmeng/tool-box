@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/channels'
 import type {
+  ActionAssetFile,
   ApiKeyTestResult,
   AppSettings,
   AppSystemInfo,
@@ -102,6 +103,7 @@ const api: BridgeApi = {
       ipcRenderer.invoke(IPC.model.removeAction, modelId, actionId),
     setPartNote: (modelId: string, partKey: string, note: string): Promise<Record<string, string>> =>
       ipcRenderer.invoke(IPC.model.setPartNote, modelId, partKey, note),
+    pickActionFiles: (): Promise<ActionAssetFile[]> => ipcRenderer.invoke(IPC.model.pickActionFiles),
     exportGroup: (payload: {
       modelId: string
       name: string
