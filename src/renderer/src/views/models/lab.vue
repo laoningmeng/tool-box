@@ -568,6 +568,28 @@ function applyBindPoseAction(): void {
     .catch(() => undefined)
 }
 
+/* ------------------------------ 骨骼冷冻 ------------------------------ */
+const frozenBoneIds = ref<string[]>([])
+
+function handleFreezeState(state: { frozen: string[] }): void {
+  frozenBoneIds.value = state.frozen
+}
+
+function toggleBoneFreeze(id: string): void {
+  const next = !frozenBoneIds.value.includes(id)
+  const result = viewer.value?.setBoneFrozen(id, next)
+  if (!result?.ok) {
+    ElMessage.warning('该骨骼不可用')
+    return
+  }
+  if (next) ElMessage.success('已冻结该骨骼：播放动作时它保持当前姿态')
+}
+
+function unfreezeAllBones(): void {
+  viewer.value?.clearFrozenBones()
+  ElMessage.success('已解冻全部骨骼')
+}
+
 /** 视口里点中骨骼/部件 */
 function handleViewportSelectBone(id: string): void {
   if (!structure.value?.bones.some((bone) => bone.id === id)) return
@@ -1469,6 +1491,15 @@ async function reveal(): Promise<void> {
                 {{ shortRole(semantics.roles[bone.id]) }}
               </span>
               <span v-else-if="bone.childCount" class="tree-row__meta num">{{ bone.childCount }}</span>
+              <button
+                class="tree-row__freeze"
+                :class="{ 'is-frozen': frozenBoneIds.includes(bone.id) }"
+                type="button"
+                :title="frozenBoneIds.includes(bone.id) ? '解冻：恢复接受动作' : '冻结：播放动作时这根骨骼保持当前姿态'"
+                @click.stop="toggleBoneFreeze(bone.id)"
+              >
+                ❄
+              </button>
             </div>
             <p v-if="bones.length === 0" class="tree-empty">
               {{ structure?.bones.length ? '没有匹配的骨骼' : '该模型没有骨骼（静态模型）' }}
@@ -1482,6 +1513,7 @@ async function reveal(): Promise<void> {
           </span>
           <span v-else class="panel-foot__text">
             {{ structure?.bones.length ?? 0 }} 骨骼<template v-if="semantics?.available"> · 语义 {{ semantics.roleCount }}</template>
+            <template v-if="frozenBoneIds.length"> · 冷冻 {{ frozenBoneIds.length }}</template>
           </span>
           <span class="panel-foot__hint">单击高亮 · 双击聚焦</span>
         </footer>
@@ -1596,6 +1628,7 @@ async function reveal(): Promise<void> {
             @bone-transform="handleBoneTransform"
             @edit-state="handleEditState"
             @history-state="handleHistoryState"
+            @freeze-state="handleFreezeState"
             @select-bone="handleViewportSelectBone"
             @select-part="handleViewportSelectPart"
             @error="errorText = $event"
@@ -1881,6 +1914,19 @@ async function reveal(): Promise<void> {
             <el-button size="small" @click="resetSelectedBone">复位该骨骼</el-button>
             <el-button size="small" @click="resetAllPose">复位全部姿态</el-button>
           </div>
+          <el-button
+            v-if="selectedBoneId"
+            size="small"
+            :type="frozenBoneIds.includes(selectedBoneId) ? 'primary' : 'default'"
+            plain
+            class="edit-bind"
+            @click="toggleBoneFreeze(selectedBoneId)"
+          >
+            {{ frozenBoneIds.includes(selectedBoneId) ? '❄ 已冷冻（点此解冻）' : '❄ 冷冻这根骨骼' }}
+          </el-button>
+          <el-button v-if="frozenBoneIds.length" size="small" class="edit-bind" @click="unfreezeAllBones">
+            解冻全部（{{ frozenBoneIds.length }}）
+          </el-button>
           <el-button
             v-if="editMode === 'bind'"
             size="small"
@@ -2573,6 +2619,36 @@ async function reveal(): Promise<void> {
   font-size: 10.5px;
   color: var(--text-tertiary);
   flex: none;
+}
+
+.tree-row__freeze {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity var(--dur-fast) linear, background var(--dur-fast) linear, color var(--dur-fast) linear;
+}
+
+.tree-row__freeze:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.tree-row__freeze.is-frozen {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
 }
 
 .tree-row__role {

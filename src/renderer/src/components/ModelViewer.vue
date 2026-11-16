@@ -90,6 +90,8 @@ const emit = defineEmits<{
   'select-bone': [id: string]
   /** 视口里点中部件（uuid） */
   'select-part': [id: string]
+  /** 冻结骨骼集合变化 */
+  'freeze-state': [state: { frozen: string[] }]
   error: [message: string]
 }>()
 
@@ -1209,6 +1211,56 @@ function applyFreezeMesh(freeze: boolean): void {
   }
 }
 
+/* ------------------------------- 骨骼冷冻 ------------------------------- */
+
+/** 被冻结的骨骼：uuid -> 冻结那一刻的局部变换；播放动画时每帧恢复回去 */
+const frozenBones = new Map<
+  string,
+  { position: THREE.Vector3; quaternion: THREE.Quaternion; scale: THREE.Vector3 }
+>()
+
+function emitFreezeState(): void {
+  emit('freeze-state', { frozen: [...frozenBones.keys()] })
+}
+
+function setBoneFrozen(id: string, frozen: boolean): { ok: boolean } {
+  const bone = boneObjects.get(id)
+  if (!bone) return { ok: false }
+  if (frozen) {
+    frozenBones.set(id, {
+      position: bone.position.clone(),
+      quaternion: bone.quaternion.clone(),
+      scale: bone.scale.clone()
+    })
+  } else {
+    frozenBones.delete(id)
+  }
+  emitFreezeState()
+  return { ok: true }
+}
+
+function clearFrozenBones(): void {
+  if (frozenBones.size === 0) return
+  frozenBones.clear()
+  emitFreezeState()
+}
+
+function isBoneFrozen(id: string): boolean {
+  return frozenBones.has(id)
+}
+
+/** 播放/精修推进后把冻结骨骼的局部变换恢复回去 */
+function restoreFrozenBones(): void {
+  if (frozenBones.size === 0) return
+  for (const [id, pose] of frozenBones) {
+    const bone = boneObjects.get(id)
+    if (!bone) continue
+    bone.position.copy(pose.position)
+    bone.quaternion.copy(pose.quaternion)
+    bone.scale.copy(pose.scale)
+  }
+}
+
 /* ------------------------------- 快捷姿态 ------------------------------- */
 
 
@@ -1673,6 +1725,10 @@ function disposeSkeletonOverlay(): void {
 }
 
 /** 每帧把关节球和连线对齐到骨骼当前世界位置（动画播放时也跟着动） */
+const FROZEN_JOINT_COLOR = new THREE.Color('#c4b5fd')
+const NORMAL_JOINT_COLOR = new THREE.Color('#67e8f9')
+let lastFrozenCount = 0
+
 function updateSkeletonOverlay(): void {
   if (!boneOverlay) return
   const { edges, joints, bones, lines } = boneOverlay
@@ -1693,8 +1749,16 @@ function updateSkeletonOverlay(): void {
     _s.setScalar(pixelRadiusAt(_v, 3))
     _m.compose(_v, _q, _s)
     joints.setMatrixAt(index, _m)
+    if (frozenBones.size > 0 || lastFrozenCount > 0) {
+      const bone = bones[index]
+      joints.setColorAt(index, frozenBones.has(bone.uuid) ? FROZEN_JOINT_COLOR : NORMAL_JOINT_COLOR)
+    }
   }
   joints.instanceMatrix.needsUpdate = true
+  if (frozenBones.size > 0 || lastFrozenCount > 0) {
+    if (joints.instanceColor) joints.instanceColor.needsUpdate = true
+    lastFrozenCount = frozenBones.size
+  }
 
   // 选中的骨骼套一圈黄色圆环，始终正对相机
   if (boneMarker && selectedBone) {
@@ -1786,6 +1850,7 @@ function clearModel(): void {
   editSession = null
   editPlaying = false
   editTime = 0
+  frozenBones.clear()
   resetHistory()
   disposeSkeletonOverlay()
   if (mixer) {
@@ -2079,6 +2144,8 @@ function animate(): void {
   const delta = Math.min((now - lastFrame) / 1000, 0.1)
   lastFrame = now
   if (mixer && activeAction && !activeAction.paused) mixer.update(delta)
+  // 冷冻骨骼：无论哪种动作（自带 / 动作库 / 已绑定 / 外部）推进后都把它们还原
+  restoreFrozenBones()
   // 精修模式自己驱动播放头，不走 mixer
   if (editSession && editPlaying) {
     editTime += delta
@@ -2087,6 +2154,7 @@ function animate(): void {
       if (!editSession.loop) editPlaying = false
     }
     sampleEditTracks(editTime)
+    restoreFrozenBones()
     if (now - lastTick > 100) {
       lastTick = now
       emitEditState()
@@ -2325,6 +2393,9 @@ defineExpose({
   playStoredAction,
   undo,
   redo,
+  setBoneFrozen,
+  clearFrozenBones,
+  isBoneFrozen,
   importExternalActions,
   playExternalAction,
   getExternalAction,
