@@ -1563,6 +1563,13 @@ function pickAt(clientX: number, clientY: number): void {
 }
 /* ------------------------------- 框选骨骼（Shift + 拖拽） ------------------------------- */
 
+/** 框选模式：开启后直接左键拖拽就是框选（不必按 Shift） */
+let boxSelectMode = false
+
+function setBoxSelectMode(enabled: boolean): void {
+  boxSelectMode = enabled
+}
+
 const boxSelect = {
   active: false,
   startX: 0,
@@ -1615,7 +1622,7 @@ let sizeHeight = 1
 
 function onCanvasPointerDown(event: PointerEvent): void {
   if (event.button !== 0) return
-  if (event.shiftKey && boneObjects.size > 0) {
+  if ((event.shiftKey || boxSelectMode) && boneObjects.size > 0) {
     const rect = renderer?.domElement.getBoundingClientRect()
     if (!rect) return
     boxSelect.active = true
@@ -2537,6 +2544,7 @@ defineExpose({
   redo,
   setBoneFrozen,
   setBonesFrozen,
+  setBoxSelectMode,
   setSelectedBones,
   clearFrozenBones,
   isBoneFrozen,

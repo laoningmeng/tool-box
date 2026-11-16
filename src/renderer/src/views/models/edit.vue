@@ -53,6 +53,12 @@ const started = ref(false)
 
 const selectedBoneIds = ref<string[]>([])
 const frozenBoneIds = ref<string[]>([])
+const boxSelectMode = ref(false)
+
+function toggleBoxSelectMode(): void {
+  boxSelectMode.value = !boxSelectMode.value
+  viewer.value?.setBoxSelectMode(boxSelectMode.value)
+}
 const boneTransform = ref<{
   position: { x: number; y: number; z: number }
   rotation: { x: number; y: number; z: number }
@@ -492,6 +498,17 @@ onBeforeUnmount(() => {
                 </el-button>
               </el-tooltip>
               <span v-if="frozenBoneIds.length" class="stage-tools__label">冷冻 {{ frozenBoneIds.length }}</span>
+            </div>
+            <div class="stage-tools__group">
+              <el-tooltip content="框选模式：直接拖拽框选骨骼（也可按住 Shift 拖拽）" placement="top">
+                <el-button
+                  size="small"
+                  :type="boxSelectMode ? 'primary' : 'default'"
+                  @click="toggleBoxSelectMode"
+                >
+                  框选
+                </el-button>
+              </el-tooltip>
             </div>
             <div class="stage-tools__group">
               <span class="stage-tools__label">工具</span>

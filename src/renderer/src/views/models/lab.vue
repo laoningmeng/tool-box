@@ -513,6 +513,13 @@ function applyBindPoseAction(): void {
 
 /* ------------------------------ 骨骼冷冻 ------------------------------ */
 const frozenBoneIds = ref<string[]>([])
+const boxBoneIds = ref<string[]>([])
+const boxSelectMode = ref(false)
+
+function toggleBoxSelectMode(): void {
+  boxSelectMode.value = !boxSelectMode.value
+  viewer.value?.setBoxSelectMode(boxSelectMode.value)
+}
 
 function handleFreezeState(state: { frozen: string[] }): void {
   frozenBoneIds.value = state.frozen
@@ -526,6 +533,35 @@ function toggleBoneFreeze(id: string): void {
     return
   }
   if (next) ElMessage.success('已冻结该骨骼：播放动作时它保持当前姿态')
+}
+
+/** 视口 Shift + 拖拽框选骨骼 */
+function handleBoxSelectBones(ids: string[]): void {
+  boxBoneIds.value = ids
+  if (ids.length === 1) {
+    selectedId.value = ids[0]
+    selectedKind.value = 'bone'
+    viewer.value?.selectNode(ids[0])
+    return
+  }
+  selectedId.value = ''
+  selectedKind.value = ''
+  boneTransform.value = null
+}
+
+/** 冻结/解冻框选的骨骼 */
+function freezeBoxBones(): void {
+  const ids = boxBoneIds.value
+  if (ids.length === 0) return
+  const allFrozen = ids.every((id) => frozenBoneIds.value.includes(id))
+  viewer.value?.setBonesFrozen(ids, !allFrozen)
+  if (allFrozen) ElMessage.success(`已解冻 ${ids.length} 根骨骼`)
+  else ElMessage.success(`已冻结 ${ids.length} 根骨骼：播放动作时保持当前姿态`)
+}
+
+function clearBoxBones(): void {
+  boxBoneIds.value = []
+  viewer.value?.setSelectedBones([])
 }
 
 function unfreezeAllBones(): void {
@@ -894,6 +930,8 @@ function togglePartPick(
 }
 
 function selectBone(id: string): void {
+  boxBoneIds.value = []
+  viewer.value?.setSelectedBones([])
   selectedId.value = id
   selectedKind.value = 'bone'
   viewer.value?.selectNode(id)
@@ -905,7 +943,9 @@ function deselectAll(): void {
   selectedId.value = ''
   selectedKind.value = ''
   selectedKeys.value = []
+  boxBoneIds.value = []
   boneTransform.value = null
+  viewer.value?.setSelectedBones([])
   viewer.value?.clearSelection()
 }
 
@@ -1351,7 +1391,7 @@ async function reveal(): Promise<void> {
             {{ structure?.bones.length ?? 0 }} 骨骼<template v-if="semantics?.available"> · 语义 {{ semantics.roleCount }}</template>
             <template v-if="frozenBoneIds.length"> · 冷冻 {{ frozenBoneIds.length }}</template>
           </span>
-          <span class="panel-foot__hint">单击高亮 · 双击聚焦</span>
+          <span class="panel-foot__hint">单击高亮 · 双击聚焦 · Shift 拖拽框选</span>
         </footer>
       </aside>
 
@@ -1412,6 +1452,29 @@ async function reveal(): Promise<void> {
               仅骨骼
             </el-button>
           </el-tooltip>
+          <el-tooltip
+            :content="boxSelectMode ? '框选模式：直接拖拽框选骨骼，点此退出' : '框选骨骼（也可直接按住 Shift 拖拽）'"
+            placement="bottom"
+          >
+            <el-button
+              size="small"
+              :type="boxSelectMode ? 'primary' : 'default'"
+              @click="toggleBoxSelectMode"
+            >
+              框选
+            </el-button>
+          </el-tooltip>
+          <template v-if="boxBoneIds.length">
+            <span class="view-toolbar__sep" />
+            <el-tooltip content="冻结/解冻框选的骨骼：播放动作时它们保持不动" placement="bottom">
+              <el-button size="small" type="primary" plain @click="freezeBoxBones">
+                ❄ 冻结选中 {{ boxBoneIds.length }}
+              </el-button>
+            </el-tooltip>
+            <el-tooltip content="取消框选" placement="bottom">
+              <el-button size="small" @click="clearBoxBones">取消</el-button>
+            </el-tooltip>
+          </template>
           <span class="view-toolbar__sep" />
           <el-popover placement="bottom" :width="252" trigger="click">
             <template #reference>
@@ -1465,6 +1528,7 @@ async function reveal(): Promise<void> {
             @history-state="handleHistoryState"
             @freeze-state="handleFreezeState"
             @select-bone="handleViewportSelectBone"
+            @select-bones="handleBoxSelectBones"
             @select-part="handleViewportSelectPart"
             @error="errorText = $event"
           />
