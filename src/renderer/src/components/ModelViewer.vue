@@ -1809,6 +1809,18 @@ function setVisibleByKeys(keys: string[], visible: boolean): void {
  * （保留世界变换与材质贴图），导出的就是一个可单独使用的道具/部件模型。
  */
 async function exportParts(keys: string[]): Promise<ArrayBuffer> {
+  // 选中高亮是改材质 emissive 实现的（只是给用户看的提示），导出前必须临时清掉，
+  // 否则提示色会被烘进导出的 glb 材质里。
+  const hadHighlight = lastHighlight
+  clearSelectionVisual()
+  try {
+    return await buildPartGroupGlb(keys)
+  } finally {
+    if (hadHighlight) reapplyHighlight()
+  }
+}
+
+async function buildPartGroupGlb(keys: string[]): Promise<ArrayBuffer> {
   const group = new THREE.Group()
   group.name = 'part-group'
   const seen = new Set<string>()
@@ -1983,6 +1995,7 @@ function resize(): void {
 
 onMounted(() => {
   if (!host.value) return
+
   const width = host.value.clientWidth || 640
   const height = host.value.clientHeight || 420
 
