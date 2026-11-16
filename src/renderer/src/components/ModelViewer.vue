@@ -92,6 +92,8 @@ const emit = defineEmits<{
   'select-part': [id: string]
   /** 冻结骨骼集合变化 */
   'freeze-state': [state: { frozen: string[] }]
+  /** 视口框选骨骼（Shift + 拖拽矩形） */
+  'select-bones': [ids: string[]]
   error: [message: string]
 }>()
 
@@ -1213,6 +1215,9 @@ function applyFreezeMesh(freeze: boolean): void {
 
 /* ------------------------------- 骨骼冷冻 ------------------------------- */
 
+/** 框选/多选高亮的骨骼 */
+const highlightedBones = new Set<string>()
+
 /** 被冻结的骨骼：uuid -> 冻结那一刻的局部变换；播放动画时每帧恢复回去 */
 const frozenBones = new Map<
   string,
@@ -1237,6 +1242,33 @@ function setBoneFrozen(id: string, frozen: boolean): { ok: boolean } {
   }
   emitFreezeState()
   return { ok: true }
+}
+
+/** 批量冻结/解冻 */
+function setBonesFrozen(ids: string[], frozen: boolean): void {
+  let changed = false
+  for (const id of ids) {
+    const bone = boneObjects.get(id)
+    if (!bone) continue
+    if (frozen) {
+      frozenBones.set(id, {
+        position: bone.position.clone(),
+        quaternion: bone.quaternion.clone(),
+        scale: bone.scale.clone()
+      })
+      changed = true
+    } else if (frozenBones.delete(id)) {
+      changed = true
+    }
+  }
+  if (changed) emitFreezeState()
+}
+
+/** 框选/多选高亮：只影响关节球颜色，不改变骨骼姿态 */
+function setSelectedBones(ids: string[]): void {
+  highlightedBones.clear()
+  for (const id of ids) highlightedBones.add(id)
+  lastFrozenCount = -1 // 强制重刷一次颜色
 }
 
 function clearFrozenBones(): void {
@@ -1529,12 +1561,109 @@ function pickAt(clientX: number, clientY: number): void {
     }
   }
 }
+/* ------------------------------- 框选骨骼（Shift + 拖拽） ------------------------------- */
+
+const boxSelect = {
+  active: false,
+  startX: 0,
+  startY: 0,
+  currentX: 0,
+  currentY: 0
+}
+let boxSelectEl: HTMLDivElement | null = null
+
+function ensureBoxOverlay(): HTMLDivElement {
+  if (boxSelectEl && boxSelectEl.isConnected) return boxSelectEl
+  const el = document.createElement('div')
+  el.className = 'viewer-box-select'
+  el.style.cssText =
+    'position:absolute;border:1px solid #4f46e5;background:rgba(79,70,229,0.14);pointer-events:none;z-index:6;display:none;border-radius:2px;'
+  host.value?.appendChild(el)
+  boxSelectEl = el
+  return el
+}
+
+function updateBoxOverlay(): void {
+  const el = ensureBoxOverlay()
+  const left = Math.min(boxSelect.startX, boxSelect.currentX)
+  const top = Math.min(boxSelect.startY, boxSelect.currentY)
+  el.style.left = `${left}px`
+  el.style.top = `${top}px`
+  el.style.width = `${Math.abs(boxSelect.currentX - boxSelect.startX)}px`
+  el.style.height = `${Math.abs(boxSelect.currentY - boxSelect.startY)}px`
+  el.style.display = 'block'
+}
+
+/** 选出矩形内的骨骼（按关节球屏幕位置判断） */
+function bonesInBox(left: number, top: number, right: number, bottom: number): string[] {
+  if (!camera) return []
+  const ids: string[] = []
+  const point = new THREE.Vector3()
+  for (const [id, bone] of boneObjects) {
+    bone.getWorldPosition(point)
+    const projected = point.clone().project(camera)
+    if (projected.z < -1 || projected.z > 1) continue
+    const screenX = ((projected.x + 1) / 2) * sizeWidth
+    const screenY = ((1 - projected.y) / 2) * sizeHeight
+    if (screenX >= left && screenX <= right && screenY >= top && screenY <= bottom) ids.push(id)
+  }
+  return ids
+}
+
+let sizeWidth = 1
+let sizeHeight = 1
+
 function onCanvasPointerDown(event: PointerEvent): void {
   if (event.button !== 0) return
+  if (event.shiftKey && boneObjects.size > 0) {
+    const rect = renderer?.domElement.getBoundingClientRect()
+    if (!rect) return
+    boxSelect.active = true
+    boxSelect.startX = event.clientX - rect.left
+    boxSelect.startY = event.clientY - rect.top
+    boxSelect.currentX = boxSelect.startX
+    boxSelect.currentY = boxSelect.startY
+    sizeWidth = rect.width
+    sizeHeight = rect.height
+    if (controls) controls.enabled = false
+    renderer?.domElement.setPointerCapture(event.pointerId)
+    updateBoxOverlay()
+    event.preventDefault()
+    return
+  }
   pointerStart = { x: event.clientX, y: event.clientY, time: performance.now() }
 }
 
+function onCanvasPointerMove(event: PointerEvent): void {
+  if (!boxSelect.active) return
+  const rect = renderer?.domElement.getBoundingClientRect()
+  if (!rect) return
+  boxSelect.currentX = event.clientX - rect.left
+  boxSelect.currentY = event.clientY - rect.top
+  updateBoxOverlay()
+}
+
 function onCanvasPointerUp(event: PointerEvent): void {
+  if (boxSelect.active) {
+    boxSelect.active = false
+    const el = boxSelectEl
+    if (el) el.style.display = 'none'
+    if (controls) controls.enabled = true
+    renderer?.domElement.releasePointerCapture?.(event.pointerId)
+    const rect = renderer?.domElement.getBoundingClientRect()
+    if (rect) {
+      const width = Math.abs(boxSelect.currentX - boxSelect.startX)
+      const height = Math.abs(boxSelect.currentY - boxSelect.startY)
+      if (width > 4 || height > 4) {
+        const left = Math.min(boxSelect.startX, boxSelect.currentX)
+        const top = Math.min(boxSelect.startY, boxSelect.currentY)
+        const ids = bonesInBox(left, top, left + width, top + height)
+        setSelectedBones(ids)
+        emit('select-bones', ids)
+      }
+    }
+    return
+  }
   const start = pointerStart
   pointerStart = null
   if (!start || event.button !== 0) return
@@ -1726,7 +1855,9 @@ function disposeSkeletonOverlay(): void {
 
 /** 每帧把关节球和连线对齐到骨骼当前世界位置（动画播放时也跟着动） */
 const FROZEN_JOINT_COLOR = new THREE.Color('#c4b5fd')
+const SELECTED_JOINT_COLOR = new THREE.Color('#fbbf24')
 const NORMAL_JOINT_COLOR = new THREE.Color('#67e8f9')
+// 用于判断颜色是否需要重刷：>0 表示有需要着色的状态
 let lastFrozenCount = 0
 
 function updateSkeletonOverlay(): void {
@@ -1749,15 +1880,22 @@ function updateSkeletonOverlay(): void {
     _s.setScalar(pixelRadiusAt(_v, 3))
     _m.compose(_v, _q, _s)
     joints.setMatrixAt(index, _m)
-    if (frozenBones.size > 0 || lastFrozenCount > 0) {
+    if (frozenBones.size > 0 || highlightedBones.size > 0 || lastFrozenCount !== 0) {
       const bone = bones[index]
-      joints.setColorAt(index, frozenBones.has(bone.uuid) ? FROZEN_JOINT_COLOR : NORMAL_JOINT_COLOR)
+      joints.setColorAt(
+        index,
+        frozenBones.has(bone.uuid)
+          ? FROZEN_JOINT_COLOR
+          : highlightedBones.has(bone.uuid)
+            ? SELECTED_JOINT_COLOR
+            : NORMAL_JOINT_COLOR
+      )
     }
   }
   joints.instanceMatrix.needsUpdate = true
-  if (frozenBones.size > 0 || lastFrozenCount > 0) {
+  if (frozenBones.size > 0 || highlightedBones.size > 0 || lastFrozenCount !== 0) {
     if (joints.instanceColor) joints.instanceColor.needsUpdate = true
-    lastFrozenCount = frozenBones.size
+    lastFrozenCount = frozenBones.size + highlightedBones.size
   }
 
   // 选中的骨骼套一圈黄色圆环，始终正对相机
@@ -2203,6 +2341,7 @@ onMounted(() => {
   renderer.domElement.style.height = '100%'
   renderer.domElement.style.display = 'block'
   renderer.domElement.addEventListener('pointerdown', onCanvasPointerDown)
+  renderer.domElement.addEventListener('pointermove', onCanvasPointerMove)
   renderer.domElement.addEventListener('pointerup', onCanvasPointerUp)
 
   scene = new THREE.Scene()
@@ -2285,8 +2424,11 @@ onBeforeUnmount(() => {
   renderer?.dispose()
   if (renderer?.domElement) {
     renderer.domElement.removeEventListener('pointerdown', onCanvasPointerDown)
+    renderer.domElement.removeEventListener('pointermove', onCanvasPointerMove)
     renderer.domElement.removeEventListener('pointerup', onCanvasPointerUp)
   }
+  boxSelectEl?.remove()
+  boxSelectEl = null
   if (renderer?.domElement.parentElement) {
     renderer.domElement.parentElement.removeChild(renderer.domElement)
   }
@@ -2394,6 +2536,8 @@ defineExpose({
   undo,
   redo,
   setBoneFrozen,
+  setBonesFrozen,
+  setSelectedBones,
   clearFrozenBones,
   isBoneFrozen,
   importExternalActions,

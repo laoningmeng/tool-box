@@ -12,6 +12,7 @@ import {
   Delete,
   FullScreen,
   Lock,
+  Refresh,
   RefreshLeft,
   RefreshRight,
   Search,
@@ -50,7 +51,8 @@ const historyState = ref({ undo: 0, redo: 0 })
 const saving = ref(false)
 const started = ref(false)
 
-const selectedBoneId = ref('')
+const selectedBoneIds = ref<string[]>([])
+const frozenBoneIds = ref<string[]>([])
 const boneTransform = ref<{
   position: { x: number; y: number; z: number }
   rotation: { x: number; y: number; z: number }
@@ -64,15 +66,27 @@ const display = reactive({
   freezeMesh: false
 })
 
+const selectedBoneId = computed(() => (selectedBoneIds.value.length === 1 ? selectedBoneIds.value[0] : ''))
+const multiSelected = computed(() => selectedBoneIds.value.length > 1)
 const selectedBone = computed(
   () => structure.value?.bones.find((bone) => bone.id === selectedBoneId.value) ?? null
 )
-
+const selectedNames = computed(() =>
+  selectedBoneIds.value
+    .map((id) => structure.value?.bones.find((bone) => bone.id === id)?.name ?? '')
+    .filter(Boolean)
+)
 const selectedRole = computed(() => {
   if (!selectedBoneId.value) return ''
   const label = semantics.value?.roles[selectedBoneId.value] ?? ''
   return label ? shortRole(label) : ''
 })
+const selectedFrozenCount = computed(
+  () => selectedBoneIds.value.filter((id) => frozenBoneIds.value.includes(id)).length
+)
+const allSelectedFrozen = computed(
+  () => selectedBoneIds.value.length > 0 && selectedFrozenCount.value === selectedBoneIds.value.length
+)
 const editing = computed(() => Boolean(editState.value?.editing))
 const editName = computed(() => editState.value?.name ?? '精修')
 const fps = computed(() => editState.value?.fps ?? 30)
@@ -120,6 +134,22 @@ function handleViewportBone(id: string): void {
   selectBone(id)
 }
 
+function handleSelectBones(ids: string[]): void {
+  selectedBoneIds.value = ids
+  if (ids.length === 1) {
+    viewer.value?.selectNode(ids[0])
+    const transform = viewer.value?.getBoneTransform(ids[0])
+    if (transform) boneTransform.value = transform
+  } else {
+    boneTransform.value = null
+    viewer.value?.clearSelection()
+  }
+}
+
+function handleFreezeState(state: { frozen: string[] }): void {
+  frozenBoneIds.value = state.frozen
+}
+
 async function beginFromRoute(): Promise<void> {
   if (started.value || !viewer.value) return
   started.value = true
@@ -156,16 +186,37 @@ const actions = computed(() => model.value?.actions ?? [])
 /* -------------------------------- 选中骨骼 -------------------------------- */
 
 function selectBone(id: string): void {
-  selectedBoneId.value = id
+  selectedBoneIds.value = [id]
+  viewer.value?.setSelectedBones([id])
   viewer.value?.selectNode(id)
   const transform = viewer.value?.getBoneTransform(id)
   if (transform) boneTransform.value = transform
 }
 
 function deselect(): void {
-  selectedBoneId.value = ''
+  selectedBoneIds.value = []
   boneTransform.value = null
+  viewer.value?.setSelectedBones([])
   viewer.value?.clearSelection()
+}
+
+/* ------------------------------ 冻结 / 重置姿态 ------------------------------ */
+
+function toggleFreezeSelected(): void {
+  const ids = selectedBoneIds.value
+  if (ids.length === 0) return
+  if (allSelectedFrozen.value) {
+    viewer.value?.setBonesFrozen(ids, false)
+    ElMessage.success(`已解冻 ${ids.length} 根骨骼`)
+  } else {
+    viewer.value?.setBonesFrozen(ids, true)
+    ElMessage.success(`已冻结 ${ids.length} 根骨骼：播放动作时保持当前姿态`)
+  }
+}
+
+function resetPose(): void {
+  viewer.value?.resetPose()
+  ElMessage.success('已重置为绑定姿态')
 }
 
 /* -------------------------------- 逐帧操作 -------------------------------- */
@@ -188,7 +239,7 @@ function seek(time: number): void {
 
 function recordKey(): void {
   if (!selectedBoneId.value) {
-    ElMessage.warning('先在左侧选中一根骨骼')
+    ElMessage.warning('先在视口里选中一根骨骼')
     return
   }
   const result = viewer.value?.recordKey()
@@ -334,6 +385,8 @@ function onKey(event: KeyboardEvent): void {
       gizmoMode.value = key === 'w' ? 'rotate' : key === 'e' ? 'translate' : 'scale'
     } else if (key === 'f' && selectedBoneId.value) {
       viewer.value?.focusNode(selectedBoneId.value)
+    } else if (key === 'x') {
+      toggleFreezeSelected()
     }
   }
 }
@@ -382,6 +435,7 @@ onBeforeUnmount(() => {
           <el-button size="small" :icon="RefreshRight" :disabled="historyState.redo === 0" @click="redoEdit" />
         </el-tooltip>
         <span class="edit-head__sep" />
+        <el-button size="small" :icon="Refresh" @click="resetPose">重置姿态</el-button>
         <el-button size="small" @click="cancel">放弃</el-button>
         <el-button size="small" type="primary" :loading="saving" @click="save">保存并绑定</el-button>
       </div>
@@ -409,6 +463,8 @@ onBeforeUnmount(() => {
             @history-state="handleHistoryState"
             @bone-transform="handleBoneTransform"
             @select-bone="handleViewportBone"
+            @select-bones="handleSelectBones"
+            @freeze-state="handleFreezeState"
             @error="errorText = $event"
           />
           <div v-else v-loading="loading" class="edit-stage__placeholder">
@@ -423,6 +479,19 @@ onBeforeUnmount(() => {
               <el-tooltip content="聚焦选中 (F)" placement="top">
                 <el-button size="small" :icon="Aim" :disabled="!selectedBoneId" @click="selectedBoneId && viewer?.focusNode(selectedBoneId)" />
               </el-tooltip>
+            </div>
+            <div class="stage-tools__group">
+              <el-tooltip content="冻结选中的骨骼：动作播放时它们保持不动" placement="top">
+                <el-button
+                  size="small"
+                  :type="allSelectedFrozen ? 'primary' : 'default'"
+                  :disabled="selectedBoneIds.length === 0"
+                  @click="toggleFreezeSelected"
+                >
+                  {{ allSelectedFrozen ? '解冻' : '❄ 冻结' }}{{ selectedBoneIds.length ? ` ${selectedFrozenCount}/${selectedBoneIds.length}` : '' }}
+                </el-button>
+              </el-tooltip>
+              <span v-if="frozenBoneIds.length" class="stage-tools__label">冷冻 {{ frozenBoneIds.length }}</span>
             </div>
             <div class="stage-tools__group">
               <span class="stage-tools__label">工具</span>
@@ -529,30 +598,48 @@ onBeforeUnmount(() => {
             <el-button size="small" @click="resetAllPose">复位全部姿态</el-button>
           </div>
         </template>
+        <template v-else-if="multiSelected">
+          <div class="edit-info">
+            <div class="edit-info__row">
+              <span>已选骨骼</span>
+              <span class="num edit-info__value">{{ selectedBoneIds.length }} 根</span>
+            </div>
+            <div class="edit-info__row">
+              <span>已冻结</span>
+              <span class="num edit-info__value">{{ selectedFrozenCount }} 根</span>
+            </div>
+          </div>
+          <div class="edit-bone-names">
+            <span v-for="name in selectedNames" :key="name" class="edit-bone-name">{{ name }}</span>
+          </div>
+          <p class="edit-empty">Shift + 拖拽可继续框选；冻结按钮在视口左下角工具条里</p>
+        </template>
         <p v-else class="edit-empty">在视口里点关节球选中骨骼，选中后这里显示属性和关键帧</p>
 
-        <div class="edit-panel__head">
-          关键帧
-          <span class="edit-panel__sub">{{ boneKeys.length }} 个</span>
-        </div>
-        <div class="edit-actions">
-          <el-button size="small" type="primary" plain :disabled="!editing" @click="recordKey">记关键帧 K</el-button>
-          <el-button size="small" :disabled="!editing" @click="recordAll">记整帧</el-button>
-          <el-button size="small" :disabled="!editing" @click="removeKey">删关键帧</el-button>
-        </div>
-        <div class="edit-key-list">
-          <button
-            v-for="time in boneKeys"
-            :key="time"
-            type="button"
-            class="edit-key"
-            :class="{ 'is-current': Math.abs(time - (editState?.time ?? 0)) < 0.5 / fps }"
-            @click="seek(time)"
-          >
-            {{ Math.round(time * fps) }} 帧
-          </button>
-          <p v-if="boneKeys.length === 0" class="edit-empty">这根骨骼还没有关键帧</p>
-        </div>
+        <template v-if="!multiSelected">
+          <div class="edit-panel__head">
+            关键帧
+            <span class="edit-panel__sub">{{ boneKeys.length }} 个</span>
+          </div>
+          <div class="edit-actions">
+            <el-button size="small" type="primary" plain :disabled="!editing" @click="recordKey">记关键帧 K</el-button>
+            <el-button size="small" :disabled="!editing" @click="recordAll">记整帧</el-button>
+            <el-button size="small" :disabled="!editing" @click="removeKey">删关键帧</el-button>
+          </div>
+          <div class="edit-key-list">
+            <button
+              v-for="time in boneKeys"
+              :key="time"
+              type="button"
+              class="edit-key"
+              :class="{ 'is-current': Math.abs(time - (editState?.time ?? 0)) < 0.5 / fps }"
+              @click="seek(time)"
+            >
+              {{ Math.round(time * fps) }} 帧
+            </button>
+            <p v-if="boneKeys.length === 0" class="edit-empty">这根骨骼还没有关键帧</p>
+          </div>
+        </template>
 
         <p class="edit-hint">
           共 {{ editState?.keyCount ?? 0 }} 个关键帧 · ←/→ 逐帧 · K 记帧 · 空格播放 · W/E/R 切工具
@@ -643,6 +730,23 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+.edit-bone-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.edit-bone-name {
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-family: var(--font-mono, monospace);
 }
 
 .edit-info {
