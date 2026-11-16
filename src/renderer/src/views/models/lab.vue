@@ -200,7 +200,8 @@ function showShortcuts(): void {
     '<div style="line-height:2;font-size:12.5px">' +
       '<b>通用</b>　Ctrl+Z 撤销 · Ctrl+Y 恢复<br/>' +
       '<b>精修</b>　← → 逐帧 · K 记关键帧 · 空格 播放/暂停<br/>' +
-      '<b>骨骼编辑</b>　选中骨骼后拖动手柄（旋转/移动），或在右栏输数值<br/>' +
+      '<b>骨骼编辑</b>　视口里点骨骼节点即选中 · W 旋转 / E 移动 / R 缩放 · F 聚焦选中<br/>' +
+      '<b>模式</b>　姿态=转骨骼看网格形变；绑定=网格冻结只挪骨骼，调完「应用为绑定姿态」<br/>' +
       '<b>视图</b>　「全屏」进入专注模式 ·「仅骨骼」冻结网格形变' +
       '</div>',
     '快捷键一览',
@@ -443,7 +444,50 @@ const selectedBone = computed(() =>
 )
 
 /* -------------------------- 骨骼编辑（gizmo + 数值） -------------------------- */
-const gizmoMode = ref<'rotate' | 'translate' | 'off'>('rotate')
+const gizmoMode = ref<'rotate' | 'translate' | 'scale' | 'off'>('rotate')
+/** 编辑模式：姿态（转骨骼看形变）/ 绑定（挪骨骼定绑定，网格冻结不形变） */
+const editMode = ref<'pose' | 'bind'>('pose')
+
+function setEditMode(mode: 'pose' | 'bind'): void {
+  editMode.value = mode
+  if (mode === 'bind') {
+    display.freezeMesh = true
+    gizmoMode.value = 'translate'
+  } else {
+    display.freezeMesh = false
+    if (gizmoMode.value === 'off') gizmoMode.value = 'rotate'
+  }
+}
+
+function applyBindPoseAction(): void {
+  void ElMessageBox.confirm(
+    '把当前骨骼位置设为新的绑定姿态？之后的姿势都会从这个新基准开始变形（可 Ctrl+Z 撤回）。',
+    '应用为绑定姿态',
+    { type: 'warning', confirmButtonText: '应用', cancelButtonText: '取消' }
+  )
+    .then(() => {
+      const result = viewer.value?.applyBindPose()
+      if (!result?.ok) {
+        ElMessage.warning(result?.message ?? '应用失败')
+        return
+      }
+      ElMessage.success('绑定姿态已更新')
+    })
+    .catch(() => undefined)
+}
+
+/** 视口里点中骨骼/部件 */
+function handleViewportSelectBone(id: string): void {
+  if (!structure.value?.bones.some((bone) => bone.id === id)) return
+  tab.value = 'bones'
+  selectBone(id)
+}
+
+function handleViewportSelectPart(id: string): void {
+  if (!structure.value?.parts.some((part) => part.id === id)) return
+  tab.value = 'parts'
+  selectPart(id)
+}
 const boneTransform = ref<{
   position: { x: number; y: number; z: number }
   rotation: { x: number; y: number; z: number }
@@ -534,6 +578,21 @@ function onEditKey(event: KeyboardEvent): void {
     event.preventDefault()
     redoEdit()
     return
+  }
+
+  // 工具快捷：W 旋转 / E 移动 / R 缩放 / F 聚焦
+  if (!mod && !event.altKey) {
+    const key = event.key.toLowerCase()
+    if (key === 'w' || key === 'e' || key === 'r') {
+      event.preventDefault()
+      gizmoMode.value = key === 'w' ? 'rotate' : key === 'e' ? 'translate' : 'scale'
+      return
+    }
+    if (key === 'f' && selectedId.value) {
+      event.preventDefault()
+      focusSelected()
+      return
+    }
   }
 
   if (!editing.value) return
@@ -1320,10 +1379,49 @@ async function reveal(): Promise<void> {
             @bone-transform="handleBoneTransform"
             @edit-state="handleEditState"
             @history-state="handleHistoryState"
+            @select-bone="handleViewportSelectBone"
+            @select-part="handleViewportSelectPart"
             @error="errorText = $event"
           />
           <div v-else v-loading="loading" class="lab__placeholder">
             <span v-if="!loading">{{ errorText || '加载中…' }}</span>
+          </div>
+
+          <div class="stage-tools">
+            <div class="stage-tools__group">
+              <span class="stage-tools__label">模式</span>
+              <el-radio-group :model-value="editMode" size="small" @change="setEditMode">
+                <el-radio-button value="pose">姿态</el-radio-button>
+                <el-radio-button value="bind">绑定</el-radio-button>
+              </el-radio-group>
+            </div>
+            <div class="stage-tools__group">
+              <span class="stage-tools__label">工具</span>
+              <el-radio-group v-model="gizmoMode" size="small">
+                <el-radio-button value="rotate">旋转 W</el-radio-button>
+                <el-radio-button value="translate">移动 E</el-radio-button>
+                <el-radio-button value="scale">缩放 R</el-radio-button>
+              </el-radio-group>
+            </div>
+            <div class="stage-tools__group">
+              <el-tooltip content="聚焦选中 (F)" placement="top">
+                <el-button size="small" :icon="Aim" :disabled="!selectedId" @click="focusSelected" />
+              </el-tooltip>
+              <el-tooltip content="聚焦全部（重置视角）" placement="top">
+                <el-button size="small" :icon="FullScreen" @click="viewer?.resetView()" />
+              </el-tooltip>
+            </div>
+            <div class="stage-tools__group">
+              <el-tooltip content="撤销 (Ctrl+Z)" placement="top">
+                <el-button size="small" :icon="RefreshLeft" :disabled="historyState.undo === 0" @click="undoEdit" />
+              </el-tooltip>
+              <el-tooltip content="恢复 (Ctrl+Y)" placement="top">
+                <el-button size="small" :icon="RefreshRight" :disabled="historyState.redo === 0" @click="redoEdit" />
+              </el-tooltip>
+            </div>
+            <div v-if="editMode === 'bind'" class="stage-tools__group">
+              <el-button size="small" type="warning" plain @click="applyBindPoseAction">应用为绑定姿态</el-button>
+            </div>
           </div>
         </div>
 
@@ -1566,7 +1664,23 @@ async function reveal(): Promise<void> {
             <el-button size="small" @click="resetSelectedBone">复位该骨骼</el-button>
             <el-button size="small" @click="resetAllPose">复位全部姿态</el-button>
           </div>
-          <p class="block__hint">拖动手柄或直接改数值；编辑时会暂停当前动作</p>
+          <el-button
+            v-if="editMode === 'bind'"
+            size="small"
+            type="warning"
+            plain
+            class="edit-bind"
+            @click="applyBindPoseAction"
+          >
+            应用为绑定姿态
+          </el-button>
+          <p class="block__hint">
+            {{
+              editMode === 'bind'
+                ? '绑定模式：网格已冻结，挪骨骼只改绑定位置；「应用为绑定姿态」后从新基准变形'
+                : '拖动手柄或直接改数值（W 旋转 / E 移动 / R 缩放）；编辑时会暂停当前动作'
+            }}
+          </p>
         </PanelSection>
 
         <PanelSection
@@ -2173,12 +2287,88 @@ async function reveal(): Promise<void> {
 }
 
 .lab__stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   border-radius: var(--radius-lg);
   overflow: hidden;
   border: 1px solid var(--border-color);
   background: #0b1220;
+}
+
+/* 视口浮层工具条：模式 / 工具 / 聚焦 / 撤销 */
+.stage-tools {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(11, 18, 32, 0.72);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+
+.stage-tools__group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.stage-tools__group:last-child {
+  padding-right: 0;
+  border-right: none;
+}
+
+.stage-tools__label {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.stage-tools :deep(.el-radio-button__inner) {
+  padding: 4px 8px;
+  font-size: 11.5px;
+  color: #cbd5e1;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: none !important;
+}
+
+.stage-tools :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: color-mix(in srgb, var(--accent) 82%, transparent);
+  border-color: transparent;
+  color: #fff;
+}
+
+.stage-tools :deep(.el-button) {
+  height: 24px;
+  padding: 0 8px;
+  margin-left: 0;
+  font-size: 11.5px;
+  color: #cbd5e1;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.stage-tools :deep(.el-button:hover) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.stage-tools :deep(.el-button.is-disabled) {
+  opacity: 0.4;
+}
+
+.edit-bind {
+  width: 100%;
+  margin-left: 0;
 }
 
 .lab__placeholder {

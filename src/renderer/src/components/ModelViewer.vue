@@ -48,7 +48,7 @@ const props = withDefaults(
     /** 高亮强度（自发光强度），0.05 ~ 1.5 */
     highlightIntensity?: number
     /** 骨骼编辑 gizmo：rotate / translate / off */
-    gizmoMode?: 'rotate' | 'translate' | 'off'
+    gizmoMode?: 'rotate' | 'translate' | 'scale' | 'off'
     /** 仅骨骼：冻结网格形变，摆骨骼时模型不动 */
     freezeMesh?: boolean
   }>(),
@@ -83,6 +83,10 @@ const emit = defineEmits<{
   'edit-state': [state: ClipEditState]
   /** 撤销/重做栈变化 */
   'history-state': [state: { undo: number; redo: number }]
+  /** 视口里点中骨骼（uuid） */
+  'select-bone': [id: string]
+  /** 视口里点中部件（uuid） */
+  'select-part': [id: string]
   error: [message: string]
 }>()
 
@@ -135,6 +139,8 @@ let lastFrame = performance.now()
 
 const partObjects = new Map<string, THREE.Object3D>()
 const partByKey = new Map<string, THREE.Object3D>()
+/** 部件对象 -> 部件 id，视口点选时反查 */
+const partIdByObject = new Map<THREE.Object3D, string>()
 const boneObjects = new Map<string, THREE.Bone>()
 const boneByName = new Map<string, THREE.Bone>()
 /** 骨架语义引擎（rig-studio 移植）：只在有蒙皮骨骼时可用 */
@@ -232,6 +238,7 @@ function parseParts(root: THREE.Object3D): ViewerPart[] {
       const id = object.uuid
       partObjects.set(id, object)
       partByKey.set(key, object)
+      partIdByObject.set(object, id)
       parts.push({
         id,
         key,
@@ -1223,6 +1230,135 @@ function quickPose(action: QuickPoseAction, step = 12): { ok: boolean; message?:
   return { ok: true }
 }
 
+/* ------------------------------- 视口点选 ------------------------------- */
+
+const raycaster = new THREE.Raycaster()
+const pointerNdc = new THREE.Vector2()
+let pointerStart: { x: number; y: number; time: number } | null = null
+
+function findPartId(object: THREE.Object3D): string | null {
+  let node: THREE.Object3D | null = object
+  while (node) {
+    const id = partIdByObject.get(node)
+    if (id) return id
+    node = node.parent
+  }
+  return null
+}
+
+/** 屏幕空间找最近的骨骼节点（关节球很小，按像素距离容差比射线更稳） */
+function pickBoneByScreen(clientX: number, clientY: number, maxPixels = 14): string | null {
+  if (!camera || !renderer) return null
+  const rect = renderer.domElement.getBoundingClientRect()
+  if (rect.width === 0 || rect.height === 0) return null
+  const world = new THREE.Vector3()
+  let bestId: string | null = null
+  let bestDistance = maxPixels
+  for (const [id, bone] of boneObjects) {
+    bone.getWorldPosition(world)
+    world.project(camera)
+    if (world.z < -1 || world.z > 1) continue
+    const screenX = rect.left + ((world.x + 1) / 2) * rect.width
+    const screenY = rect.top + ((1 - world.y) / 2) * rect.height
+    const distance = Math.hypot(screenX - clientX, screenY - clientY)
+    if (distance <= bestDistance) {
+      bestDistance = distance
+      bestId = id
+    }
+  }
+  return bestId
+}
+
+/** 视口里点一下：先找骨骼节点，其次找网格部件 */
+function pickAt(clientX: number, clientY: number): void {
+  if (!camera || !renderer || !current) return
+
+  const boneId = pickBoneByScreen(clientX, clientY)
+  if (boneId) {
+    emit('select-bone', boneId)
+    return
+  }
+
+  const rect = renderer.domElement.getBoundingClientRect()
+  if (rect.width === 0 || rect.height === 0) return
+  pointerNdc.set(
+    ((clientX - rect.left) / rect.width) * 2 - 1,
+    -((clientY - rect.top) / rect.height) * 2 + 1
+  )
+  raycaster.setFromCamera(pointerNdc, camera)
+
+  const meshes: THREE.Object3D[] = []
+  current.traverse((child) => {
+    if ((child as THREE.Mesh).isMesh) meshes.push(child)
+  })
+  const hits = raycaster.intersectObjects(meshes, false)
+  for (const hit of hits) {
+    const id = findPartId(hit.object)
+    if (id) {
+      emit('select-part', id)
+      return
+    }
+  }
+}
+function onCanvasPointerDown(event: PointerEvent): void {
+  if (event.button !== 0) return
+  pointerStart = { x: event.clientX, y: event.clientY, time: performance.now() }
+}
+
+function onCanvasPointerUp(event: PointerEvent): void {
+  const start = pointerStart
+  pointerStart = null
+  if (!start || event.button !== 0) return
+  // 拖动视角/拖手柄时不当作点选
+  const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y)
+  if (moved > 5 || performance.now() - start.time > 700) return
+  pickAt(event.clientX, event.clientY)
+}
+
+/* ------------------------------- 绑定姿态 ------------------------------- */
+
+/**
+ * 把当前骨骼世界变换定为新的绑定姿态（重建 inverse bind matrix）。
+ * 配合「仅骨骼」冻结网格使用：骨骼挪动时不看网格形变，应用后从新的绑定姿态开始变形。
+ */
+function applyBindPose(): { ok: boolean; message?: string } {
+  if (!current) return { ok: false, message: '模型还没加载完' }
+  const meshes = collectSkinnedMeshes(current)
+  if (meshes.length === 0) return { ok: false, message: '该模型没有蒙皮网格，无法设置绑定姿态' }
+  pushHistory('应用为绑定姿态')
+  stopAnimationForEdit()
+  current.updateMatrixWorld(true)
+  for (const mesh of meshes) {
+    const skeleton = mesh.skeleton
+    if (!skeleton) continue
+    for (let index = 0; index < skeleton.bones.length; index += 1) {
+      const bone = skeleton.bones[index]
+      bone.updateWorldMatrix(true, false)
+      skeleton.boneInverses[index].copy(bone.matrixWorld).invert()
+    }
+    skeleton.update()
+  }
+  // 新的绑定姿态成为「复位」基准
+  for (const [id, bone] of boneObjects) {
+    initialLocal.set(id, {
+      position: bone.position.clone(),
+      quaternion: bone.quaternion.clone(),
+      scale: bone.scale.clone()
+    })
+  }
+  // 语义与动作库依赖绑定姿态，重新跑一遍识别
+  try {
+    rigInfo = buildRig(current, collectSkinnedMeshes(current))
+    semanticRig = autoDetectSemantics(rigInfo)
+  } catch {
+    rigInfo = null
+    semanticRig = null
+  }
+  if (boneOverlay) updateSkeletonOverlay()
+  emitBoneTransform()
+  return { ok: true }
+}
+
 /* ------------------------------- 相机与网格 ------------------------------- */
 
 function frameObject(object: THREE.Object3D, padding = 1.35): void {
@@ -1486,6 +1622,8 @@ function clearModel(): void {
   disposeObject(current)
   current = null
   partObjects.clear()
+  partByKey.clear()
+  partIdByObject.clear()
   boneObjects.clear()
   boneByName.clear()
   rigInfo = null
@@ -1806,6 +1944,8 @@ onMounted(() => {
   renderer.domElement.style.width = '100%'
   renderer.domElement.style.height = '100%'
   renderer.domElement.style.display = 'block'
+  renderer.domElement.addEventListener('pointerdown', onCanvasPointerDown)
+  renderer.domElement.addEventListener('pointerup', onCanvasPointerUp)
 
   scene = new THREE.Scene()
   applyBackground()
@@ -1826,7 +1966,7 @@ onMounted(() => {
   // 骨骼编辑 gizmo：旋转/移动，拖动时暂停轨道控制
   gizmo = new TransformControls(camera, renderer.domElement)
   gizmo.setSpace('local')
-  gizmo.setMode(props.gizmoMode === 'translate' ? 'translate' : 'rotate')
+  gizmo.setMode(props.gizmoMode === 'off' ? 'rotate' : props.gizmoMode)
   gizmo.setSize(0.8)
   const gizmoHelper = gizmo.getHelper()
   gizmoHelper.visible = false
@@ -1885,6 +2025,10 @@ onBeforeUnmount(() => {
   envTexture?.dispose()
   pmrem?.dispose()
   renderer?.dispose()
+  if (renderer?.domElement) {
+    renderer.domElement.removeEventListener('pointerdown', onCanvasPointerDown)
+    renderer.domElement.removeEventListener('pointerup', onCanvasPointerUp)
+  }
   if (renderer?.domElement.parentElement) {
     renderer.domElement.parentElement.removeChild(renderer.domElement)
   }
@@ -1991,6 +2135,7 @@ defineExpose({
   undo,
   redo,
   quickPose,
+  applyBindPose,
   focusNode,
   playClip,
   pauseClip,
