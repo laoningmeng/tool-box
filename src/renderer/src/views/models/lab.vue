@@ -36,7 +36,7 @@ import { useAppStore } from '@renderer/stores/app'
 import { formatBytes, formatDateTime } from '@renderer/utils/format'
 import ModelViewer from '@renderer/components/ModelViewer.vue'
 import PanelSection from '@renderer/components/PanelSection.vue'
-import type { ClipEditState, QuickPoseAction, SemanticSummary, ViewerStructure } from '@renderer/components/model-viewer-types'
+import type { QuickPoseAction, SemanticSummary, ViewerStructure } from '@renderer/components/model-viewer-types'
 import { ACTION_LIBRARY } from '@renderer/rig/actions'
 import type { ActionKind } from '@renderer/rig/types'
 import type { ModelAction } from '@shared/types'
@@ -97,21 +97,9 @@ const clipTime = ref(0)
 const clipDuration = ref(0)
 const speed = ref(1)
 
-/* ------------------------------ 动作精修状态 ------------------------------ */
-const editState = ref<ClipEditState | null>(null)
-const editing = computed(() => Boolean(editState.value?.editing))
-const savingAction = ref(false)
+/* ------------------------------ 动作 / 模型 ------------------------------ */
 const actions = computed(() => model.value?.actions ?? [])
 const modelId = computed(() => String(route.params.id ?? ''))
-
-function handleEditState(state: ClipEditState): void {
-  editState.value = state
-  if (state.editing) {
-    playing.value = state.playing
-    clipTime.value = state.time
-    clipDuration.value = state.duration
-  }
-}
 
 /* ------------------------------ 撤销 / 重做 ------------------------------ */
 const historyState = ref({ undo: 0, redo: 0 })
@@ -237,12 +225,6 @@ function handleMenuCommand(command: string): void {
     case 'reset-pose':
       resetAllPose()
       break
-    case 'save-action':
-      void saveEdit()
-      break
-    case 'cancel-edit':
-      void cancelEdit()
-      break
     case 'fullscreen':
       void appStore.toggleFocusMode()
       break
@@ -265,31 +247,8 @@ function handleMenuCommand(command: string): void {
     case 'play':
       togglePlay()
       break
-    case 'frame-prev':
-      stepFrame(-1)
-      break
-    case 'frame-next':
-      stepFrame(1)
-      break
-    case 'record-key':
-      recordKey()
-      break
-    case 'record-all':
-      recordAll()
-      break
-    case 'delete-key':
-      removeKey()
-      break
     case 'edit-clip':
-      if (editing.value) {
-        ElMessage.info('已经在精修模式里了')
-      } else if (libraryKind.value) {
-        startEditLibrary()
-      } else if (clipIndex.value >= 0) {
-        startEditNative(clipIndex.value)
-      } else {
-        ElMessage.warning('先选一段动作（自带片段 / 动作库 / 已绑定动作）')
-      }
+      startEditCurrent()
       break
     case 'panel-props':
       inspectorTab.value = 'props'
@@ -326,12 +285,6 @@ function handleMenuCommand(command: string): void {
       )
       break
   }
-}
-
-/** 关键帧条上的百分比位置 */
-function keyPercent(time: number): string {
-  const duration = Math.max(editState.value?.duration ?? 1, 0.001)
-  return Math.min(100, Math.max(0, (time / duration) * 100)) + '%'
 }
 
 /** 快捷姿态：每次点击转 12° */
@@ -390,16 +343,6 @@ function finishQuickPose(): void {
   viewer.value?.endQuickPose()
   quickAction.value = ''
 }
-
-/** 精修模式下当前帧 / 总帧 */
-const editFrame = computed(() => {
-  const fps = editState.value?.fps ?? 30
-  return {
-    current: Math.round((editState.value?.time ?? 0) * fps),
-    total: Math.round((editState.value?.duration ?? 0) * fps),
-    fps
-  }
-})
 
 const display = reactive({
   autoRotate: true,
@@ -719,20 +662,6 @@ function onEditKey(event: KeyboardEvent): void {
     }
   }
 
-  if (!editing.value) return
-  if (event.key === 'ArrowLeft') {
-    event.preventDefault()
-    stepFrame(-1)
-  } else if (event.key === 'ArrowRight') {
-    event.preventDefault()
-    stepFrame(1)
-  } else if (event.key === 'k' || event.key === 'K') {
-    event.preventDefault()
-    recordKey()
-  } else if (event.key === ' ') {
-    event.preventDefault()
-    togglePlay()
-  }
 }
 
 onMounted(() => {
@@ -771,46 +700,41 @@ function playLibrary(kind: ActionKind): void {
   ElMessage.success(`已生成动作：${result.name ?? kind}`)
 }
 
-/* ------------------------------ 精修入口与操作 ------------------------------ */
+/* ------------------------------ 精修入口（跳转独立精修页） ------------------------------ */
 
-function enterEdit(result: { ok: boolean; message?: string } | undefined, label: string): void {
-  if (!result?.ok) {
-    ElMessage.warning(result?.message ?? '无法精修这段动作')
-    return
-  }
-  libraryKind.value = ''
-  clipIndex.value = -1
+function openEditPage(query: Record<string, string>): void {
+  viewer.value?.stopClip()
   playing.value = false
-  ElMessage.success(`进入精修：${label}`)
+  void router.push({ path: `/models/edit/${modelId.value}`, query })
 }
 
 /** 精修模型自带动画 */
 function startEditNative(index: number): void {
-  const name = structure.value?.clips[index]?.name ?? `动作 ${index + 1}`
-  enterEdit(viewer.value?.beginEdit({ clipIndex: index, origin: 'native', name }), name)
+  openEditPage({ type: 'native', index: String(index) })
 }
 
 /** 精修当前从动作库生成的动作 */
 function startEditLibrary(): void {
   if (!libraryKind.value) return
-  const kind = libraryKind.value
-  const label = libraryDefs.value.find((item) => item.kind === kind)?.label ?? kind
-  enterEdit(viewer.value?.beginEdit({ kind, origin: 'library' }), label)
+  openEditPage({ type: 'library', kind: libraryKind.value })
 }
 
 /** 精修已绑定到模型的动作 */
 function startEditSaved(action: ModelAction): void {
-  enterEdit(
-    viewer.value?.beginEdit({
-      name: action.name,
-      origin: action.origin,
-      sourceKind: action.sourceKind,
-      tracks: action.tracks,
-      duration: action.duration,
-      loop: action.loop
-    }),
-    action.name
-  )
+  openEditPage({ type: 'action', id: action.id })
+}
+
+/** 菜单「进入精修」：按当前播放来源决定 */
+function startEditCurrent(): void {
+  if (libraryKind.value) {
+    startEditLibrary()
+    return
+  }
+  if (clipIndex.value >= 0) {
+    startEditNative(clipIndex.value)
+    return
+  }
+  ElMessage.warning('先选一段动作（自带片段 / 动作库 / 已绑定动作）')
 }
 
 /* ------------------------------ 外部动作（Mixamo） ------------------------------ */
@@ -874,61 +798,6 @@ async function bindExternal(index: number): Promise<void> {
   } finally {
     bindingExternalIndex.value = -1
   }
-}
-
-async function saveEdit(): Promise<void> {
-  const payload = viewer.value?.getEditResult()
-  if (!payload) {
-    ElMessage.warning('没有可保存的关键帧')
-    return
-  }
-  savingAction.value = true
-  try {
-    const saved = await window.api.model.saveAction(modelId.value, payload)
-    const list = await window.api.model.list()
-    model.value = list.find((item) => item.id === modelId.value) ?? model.value
-    viewer.value?.endEdit()
-    ElMessage.success(`已绑定动作：${saved.name}（${saved.tracks.length} 根骨骼）`)
-  } catch (error) {
-    ElMessage.error(`保存失败：${(error as Error).message}`)
-  } finally {
-    savingAction.value = false
-  }
-}
-
-async function cancelEdit(): Promise<void> {
-  try {
-    await ElMessageBox.confirm('放弃本次精修？已记录的关键帧不会保存。', '放弃精修', {
-      type: 'warning',
-      confirmButtonText: '放弃',
-      cancelButtonText: '继续编辑'
-    })
-  } catch {
-    return
-  }
-  viewer.value?.endEdit()
-  viewer.value?.resetPose()
-}
-
-function stepFrame(delta: number): void {
-  viewer.value?.stepEditFrame(delta)
-}
-
-function recordKey(): void {
-  const result = viewer.value?.recordKey()
-  if (!result?.ok) ElMessage.warning(result?.message ?? '记录失败')
-  else ElMessage.success('已记录关键帧')
-}
-
-function recordAll(): void {
-  const result = viewer.value?.recordAllKeys()
-  if (result?.ok) ElMessage.success(`已记录整帧（${result.count} 根骨骼）`)
-  else ElMessage.warning('记录失败')
-}
-
-function removeKey(): void {
-  const result = viewer.value?.deleteKey()
-  if (!result?.ok) ElMessage.warning(result?.message ?? '删除失败')
 }
 
 function playSaved(action: ModelAction): void {
@@ -1175,16 +1044,6 @@ function playClip(index: number): void {
 }
 
 function togglePlay(): void {
-  if (editing.value) {
-    if (editState.value?.playing) {
-      viewer.value?.pauseEdit()
-      playing.value = false
-    } else {
-      viewer.value?.playEdit()
-      playing.value = true
-    }
-    return
-  }
   if (!hasPlayable.value) return
   if (clipIndex.value < 0 && !libraryKind.value) {
     playClip(0)
@@ -1200,11 +1059,6 @@ function togglePlay(): void {
 }
 
 function restartClip(): void {
-  if (editing.value) {
-    viewer.value?.seekEdit(0)
-    clipTime.value = 0
-    return
-  }
   if (!hasPlayable.value) return
   viewer.value?.seekClip(0)
   clipTime.value = 0
@@ -1212,11 +1066,6 @@ function restartClip(): void {
 
 function handleSeek(value: number | number[]): void {
   const time = Array.isArray(value) ? value[0] : value
-  if (editing.value) {
-    viewer.value?.seekEdit(time)
-    clipTime.value = time
-    return
-  }
   viewer.value?.seekClip(time)
   clipTime.value = time
 }
@@ -1291,8 +1140,6 @@ async function reveal(): Promise<void> {
             </el-dropdown-item>
             <el-dropdown-item command="reset-bone" :disabled="!selectedBoneId" divided>复位该骨骼</el-dropdown-item>
             <el-dropdown-item command="reset-pose" :disabled="!structure?.bones.length">复位全部姿态</el-dropdown-item>
-            <el-dropdown-item command="save-action" :disabled="!editing" divided>保存并绑定动作</el-dropdown-item>
-            <el-dropdown-item command="cancel-edit" :disabled="!editing">放弃精修</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -1329,18 +1176,7 @@ async function reveal(): Promise<void> {
             <el-dropdown-item command="play" :disabled="!hasPlayable">
               {{ playing ? '暂停' : '播放' }}<span class="menu-hint">空格</span>
             </el-dropdown-item>
-            <el-dropdown-item command="edit-clip" :disabled="editing">进入精修</el-dropdown-item>
-            <el-dropdown-item command="record-key" :disabled="!editing" divided>
-              记关键帧<span class="menu-hint">K</span>
-            </el-dropdown-item>
-            <el-dropdown-item command="record-all" :disabled="!editing">记整帧</el-dropdown-item>
-            <el-dropdown-item command="delete-key" :disabled="!editing">删关键帧</el-dropdown-item>
-            <el-dropdown-item command="frame-prev" :disabled="!editing" divided>
-              上一帧<span class="menu-hint">←</span>
-            </el-dropdown-item>
-            <el-dropdown-item command="frame-next" :disabled="!editing">
-              下一帧<span class="menu-hint">→</span>
-            </el-dropdown-item>
+            <el-dropdown-item command="edit-clip">进入精修（新页面）</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -1626,7 +1462,6 @@ async function reveal(): Promise<void> {
             @semantics="handleSemantics"
             @tick="handleTick"
             @bone-transform="handleBoneTransform"
-            @edit-state="handleEditState"
             @history-state="handleHistoryState"
             @freeze-state="handleFreezeState"
             @select-bone="handleViewportSelectBone"
@@ -1994,54 +1829,6 @@ async function reveal(): Promise<void> {
 
         <div v-show="inspectorTab === 'actions'" class="inspector-body">
         <PanelSection
-          v-if="editing"
-          tone="accent"
-          title="精修"
-          :count="editState?.name"
-          storage-key="clip-edit"
-          :default-open="true"
-          :key="'clip-edit-' + layoutVersion"
-        >
-          <template #actions>
-            <el-button type="primary" size="small" :loading="savingAction" @click="saveEdit">
-              保存并绑定
-            </el-button>
-          </template>
-          <div class="edit-timeline">
-            <el-button-group size="small">
-              <el-button :icon="RefreshLeft" @click="viewer?.seekEdit(0)" />
-              <el-button :icon="ArrowLeft" @click="stepFrame(-1)" />
-              <el-button :icon="editState?.playing ? VideoPause : VideoPlay" @click="togglePlay" />
-              <el-button :icon="ArrowRight" @click="stepFrame(1)" />
-            </el-button-group>
-            <span class="edit-time num">{{ editFrame.current }} / {{ editFrame.total }} 帧</span>
-          </div>
-
-          <div class="key-strip">
-            <span
-              v-for="time in editState?.boneKeys ?? []"
-              :key="time"
-              class="key-mark"
-              :class="{ 'is-current': Math.abs(time - (editState?.time ?? 0)) < 0.5 / editFrame.fps }"
-              :style="{ left: keyPercent(time) }"
-            />
-            <span class="key-playhead" :style="{ left: keyPercent(editState?.time ?? 0) }" />
-          </div>
-
-          <div class="edit-buttons">
-            <el-button size="small" type="primary" plain @click="recordKey">记关键帧 K</el-button>
-            <el-button size="small" @click="recordAll">记整帧</el-button>
-            <el-button size="small" @click="removeKey">删关键帧</el-button>
-          </div>
-
-          <p class="block__hint">
-            共 {{ editState?.keyCount ?? 0 }} 个关键帧 · 选中骨骼 {{ editState?.boneKeys.length ?? 0 }} 个 ·
-            ← / → 逐帧，K 记帧
-          </p>
-          <el-button size="small" class="edit-cancel" @click="cancelEdit">放弃精修</el-button>
-        </PanelSection>
-
-        <PanelSection
           title="动作"
           :count="clips.length"
           storage-key="clips"
@@ -2073,7 +1860,7 @@ async function reveal(): Promise<void> {
             </div>
           </div>
           <p v-else class="block__empty">该模型没有内置动作</p>
-          <div v-if="libraryKind && !editing" class="edit-entry">
+          <div v-if="libraryKind" class="edit-entry">
             <span class="edit-entry__label">
               当前：{{ libraryDefs.find((item) => item.kind === libraryKind)?.label ?? libraryKind }}
             </span>

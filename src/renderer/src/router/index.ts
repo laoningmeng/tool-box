@@ -44,6 +44,12 @@ const router = createRouter({
           meta: { title: '实验台', group: '3D 模型管理' }
         },
         {
+          path: 'models/edit/:id',
+          name: 'model-edit',
+          component: () => import('@renderer/views/models/edit.vue'),
+          meta: { title: '动作精修', group: '3D 模型管理' }
+        },
+        {
           path: 'workflow',
           name: 'workflow',
           component: () => import('@renderer/views/workflow/index.vue'),
