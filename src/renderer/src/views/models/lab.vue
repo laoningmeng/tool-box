@@ -1315,13 +1315,13 @@ async function reveal(): Promise<void> {
                 <el-icon v-if="selectedKeys.includes(part.key)"><Check /></el-icon>
               </button>
 
-              <div class="part-row__body">
+              <div
+                class="part-row__body"
+                :title="`${PART_TYPE_LABEL[part.type] ?? part.type} (${part.name})  ·  ${part.triangles.toLocaleString('zh-CN')} 面 · ${part.vertices.toLocaleString('zh-CN')} 顶点`"
+              >
                 <div class="part-row__title">
                   <span class="part-row__type">{{ PART_TYPE_LABEL[part.type] ?? part.type }}</span>
-                  <span class="part-row__name" :title="part.name">({{ part.name }})</span>
-                </div>
-                <div class="part-row__meta num">
-                  {{ part.triangles.toLocaleString('zh-CN') }} 面 · {{ part.vertices.toLocaleString('zh-CN') }} 顶点
+                  <span class="part-row__name">({{ part.name }})</span>
                 </div>
               </div>
 
@@ -2104,7 +2104,7 @@ async function reveal(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 7px 8px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   background: var(--bg-surface);
@@ -2193,13 +2193,6 @@ async function reveal(): Promise<void> {
   font-size: 11px;
 }
 
-.part-row__meta {
-  font-size: 10.5px;
-  color: var(--text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .part-row__eye {
   flex: none;
