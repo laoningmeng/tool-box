@@ -9,6 +9,7 @@ import {
   Box,
   Brush,
   Camera,
+  Check,
   Delete,
   Download,
   EditPen,
@@ -866,6 +867,33 @@ function onPartClick(part: { id: string; key: string }, index: number, event: Mo
   }
 }
 
+/** 点左侧圆形勾选：切换该部件是否进入「分组选择集」 */
+function togglePartPick(
+  part: { id: string; key: string },
+  index: number,
+  event: MouseEvent
+): void {
+  if (event.shiftKey && lastClickedIndex >= 0) {
+    const start = Math.min(lastClickedIndex, index)
+    const end = Math.max(lastClickedIndex, index)
+    const range = parts.value.slice(start, end + 1).map((item) => item.key)
+    selectedKeys.value = [...new Set([...selectedKeys.value, ...range])]
+  } else {
+    selectedKeys.value = selectedKeys.value.includes(part.key)
+      ? selectedKeys.value.filter((key) => key !== part.key)
+      : [...selectedKeys.value, part.key]
+  }
+  lastClickedIndex = index
+  if (selectedKeys.value.length === 1) {
+    const only = parts.value.find((item) => item.key === selectedKeys.value[0])
+    if (only) selectPart(only.id)
+  } else {
+    selectedId.value = ''
+    selectedKind.value = ''
+    viewer.value?.highlightParts(selectedKeys.value)
+  }
+}
+
 function selectBone(id: string): void {
   selectedId.value = id
   selectedKind.value = 'bone'
@@ -1268,26 +1296,43 @@ async function reveal(): Promise<void> {
             <div
               v-for="(part, index) in parts"
               :key="part.id"
-              class="tree-row"
+              class="part-row"
               :class="{
                 'is-active': selectedId === part.id,
                 'is-checked': selectedKeys.includes(part.key),
                 'is-hidden': hiddenParts.has(part.id)
               }"
-              :style="{ paddingLeft: `${8 + part.depth * 12}px` }"
+              :style="{ marginLeft: `${part.depth * 10}px` }"
               @click="onPartClick(part, index, $event)"
               @dblclick="viewer?.focusNode(part.id)"
             >
-              <el-button
-                class="tree-row__eye"
-                link
-                size="small"
-                :icon="hiddenParts.has(part.id) ? Hide : View"
+              <button
+                class="part-row__check"
+                type="button"
+                :title="selectedKeys.includes(part.key) ? '取消选择（可多选后分组）' : '选择（可多选后分组）'"
+                @click.stop="togglePartPick(part, index, $event)"
+              >
+                <el-icon v-if="selectedKeys.includes(part.key)"><Check /></el-icon>
+              </button>
+
+              <div class="part-row__body">
+                <div class="part-row__title">
+                  <span class="part-row__type">{{ PART_TYPE_LABEL[part.type] ?? part.type }}</span>
+                  <span class="part-row__name" :title="part.name">({{ part.name }})</span>
+                </div>
+                <div class="part-row__meta num">
+                  {{ part.triangles.toLocaleString('zh-CN') }} 面 · {{ part.vertices.toLocaleString('zh-CN') }} 顶点
+                </div>
+              </div>
+
+              <button
+                class="part-row__eye"
+                type="button"
+                :title="hiddenParts.has(part.id) ? '显示' : '隐藏'"
                 @click.stop="togglePartVisible(part.id)"
-              />
-              <el-icon class="tree-row__icon"><Box /></el-icon>
-              <span class="tree-row__name" :title="part.name">{{ part.name }}</span>
-              <span class="tree-row__meta num">{{ part.triangles.toLocaleString('zh-CN') }}</span>
+              >
+                <el-icon><component :is="hiddenParts.has(part.id) ? Hide : View" /></el-icon>
+              </button>
             </div>
             <p v-if="parts.length === 0" class="tree-empty">
               {{ structure?.parts.length ? '没有匹配的部件' : '该模型没有可拆分的部件' }}
@@ -2055,6 +2100,136 @@ async function reveal(): Promise<void> {
 }
 
 /* ---------- 左：结构 ---------- */
+.part-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) linear, background var(--dur-fast) linear;
+}
+
+.part-row + .part-row {
+  margin-top: 4px;
+}
+
+.part-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-color));
+}
+
+.part-row.is-checked {
+  border-color: color-mix(in srgb, var(--warning, #f59e0b) 55%, transparent);
+  background: color-mix(in srgb, var(--warning, #f59e0b) 8%, var(--bg-surface));
+}
+
+.part-row.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface));
+}
+
+.part-row.is-hidden {
+  opacity: 0.55;
+}
+
+.part-row__check {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-color);
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) linear, background var(--dur-fast) linear;
+}
+
+.part-row__check:hover {
+  border-color: var(--warning, #f59e0b);
+}
+
+.part-row.is-checked .part-row__check {
+  border-color: var(--warning, #f59e0b);
+  background: var(--warning, #f59e0b);
+}
+
+.part-row__check :deep(.el-icon) {
+  font-size: 11px;
+}
+
+.part-row__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.part-row__title {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.part-row__type {
+  flex: none;
+  font-weight: 600;
+}
+
+.part-row__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.part-row__meta {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.part-row__eye {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-color);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) linear, color var(--dur-fast) linear;
+}
+
+.part-row__eye:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.part-row.is-hidden .part-row__eye {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+  color: var(--danger);
+}
+
+.part-row__eye :deep(.el-icon) {
+  font-size: 12px;
+}
+
 .panel-tabs {
   display: flex;
   padding: 8px 8px 0;
