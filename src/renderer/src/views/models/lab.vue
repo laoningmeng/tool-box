@@ -120,6 +120,7 @@ function handleHistoryState(state: { undo: number; redo: number }): void {
 }
 
 function undoEdit(): void {
+  quickAction.value = ''
   const result = viewer.value?.undo()
   if (!result?.ok) {
     ElMessage.info('没有可撤销的操作')
@@ -129,6 +130,7 @@ function undoEdit(): void {
 }
 
 function redoEdit(): void {
+  quickAction.value = ''
   const result = viewer.value?.redo()
   if (!result?.ok) {
     ElMessage.info('没有可恢复的操作')
@@ -351,11 +353,45 @@ const QUICK_POSES: Array<{ action: QuickPoseAction; label: string }> = [
   { action: 'lean-back', label: '身体后仰' }
 ]
 
+const quickAction = ref<QuickPoseAction | ''>('')
+const quickAmount = ref(12)
+
+const quickActionLabel = computed(() => {
+  if (!quickAction.value) return ''
+  return QUICK_POSES.find((item) => item.action === quickAction.value)?.label ?? quickAction.value
+})
+
+/** 点快捷姿态按钮：选中该动作并默认 12°，下方出现滑杆 */
 function applyQuickPose(action: QuickPoseAction): void {
-  const result = viewer.value?.quickPose(action)
-  if (!result?.ok) {
-    ElMessage.warning(result?.message ?? '该动作不可用')
+  if (action === 'reset') {
+    viewer.value?.endQuickPose()
+    quickAction.value = ''
+    const result = viewer.value?.beginQuickPose('reset')
+    if (!result?.ok) ElMessage.warning(result?.message ?? '重置失败')
+    return
   }
+  quickAmount.value = 12
+  const result = viewer.value?.setQuickPoseAmount(action, quickAmount.value)
+  if (!result?.ok) {
+    quickAction.value = ''
+    ElMessage.warning(result?.message ?? '该动作不可用')
+    return
+  }
+  quickAction.value = action
+}
+
+/** 拖滑杆：实时按角度重新施加 */
+function handleQuickAmount(value: number | number[]): void {
+  const amount = Array.isArray(value) ? value[0] : value
+  quickAmount.value = amount
+  if (!quickAction.value) return
+  const result = viewer.value?.setQuickPoseAmount(quickAction.value, amount)
+  if (!result?.ok) ElMessage.warning(result?.message ?? '调整失败')
+}
+
+function finishQuickPose(): void {
+  viewer.value?.endQuickPose()
+  quickAction.value = ''
 }
 
 /** 精修模式下当前帧 / 总帧 */
@@ -1729,6 +1765,7 @@ async function reveal(): Promise<void> {
               v-for="item in QUICK_POSES"
               :key="item.action"
               size="small"
+              :type="quickAction === item.action ? 'primary' : 'default'"
               @click="applyQuickPose(item.action)"
             >
               {{ item.label }}
@@ -1737,7 +1774,27 @@ async function reveal(): Promise<void> {
               重置姿态
             </el-button>
           </div>
-          <p class="block__hint">每次点击 ±12°，可反复点击叠加；Ctrl+Z 可撤销</p>
+
+          <div v-if="quickAction" class="quick-amount">
+            <div class="quick-amount__head">
+              <span class="quick-amount__label">{{ quickActionLabel }}</span>
+              <span class="quick-amount__value num">{{ quickAmount }}°</span>
+            </div>
+            <el-slider
+              :model-value="quickAmount"
+              :min="0"
+              :max="60"
+              :step="1"
+              :show-tooltip="false"
+              size="small"
+              @input="handleQuickAmount"
+            />
+            <el-button size="small" class="quick-amount__done" @click="finishQuickPose">完成</el-button>
+          </div>
+
+          <p class="block__hint">
+            {{ quickAction ? '拖动滑杆调节程度，0° 等于没动；点「完成」收起滑杆' : '点一个动作按钮，下方出现滑杆调节程度；Ctrl+Z 可撤销' }}
+          </p>
         </PanelSection>
         </div>
 
@@ -2184,6 +2241,42 @@ async function reveal(): Promise<void> {
   margin-left: 0;
   padding: 0 4px;
   font-size: 11.5px;
+}
+
+.quick-amount {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.quick-amount__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+}
+
+.quick-amount__label {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.quick-amount__value {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.quick-amount :deep(.el-slider) {
+  margin: 0 4px;
+}
+
+.quick-amount__done {
+  align-self: flex-end;
+  margin-top: 2px;
 }
 
 .block__actions {

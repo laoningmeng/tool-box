@@ -1026,6 +1026,7 @@ function resetHistory(): void {
 }
 
 function undo(): { ok: boolean; label?: string } {
+  quickPoseBase = null
   const snapshot = undoStack.pop()
   if (!snapshot) return { ok: false }
   redoStack.push(captureSnapshot(snapshot.label))
@@ -1036,6 +1037,7 @@ function undo(): { ok: boolean; label?: string } {
 }
 
 function redo(): { ok: boolean; label?: string } {
+  quickPoseBase = null
   const snapshot = redoStack.pop()
   if (!snapshot) return { ok: false }
   undoStack.push(captureSnapshot(snapshot.label))
@@ -1159,17 +1161,26 @@ function rotateTowardBody(bone: THREE.Bone, inward: boolean, step: number): bool
  * 一键姿态微调：按语义角色找骨骼，绕世界轴转固定角度。
  * 左右对称的动作用 lateralSign 决定正负，所以不依赖模型朝 +Z。
  */
-function quickPose(action: QuickPoseAction, step = 12): { ok: boolean; message?: string } {
-  if (action === 'reset') {
-    resetPose()
-    return { ok: true }
+/** 快捷姿态的「基准姿态」：拖动滑杆时先恢复到这里，再按角度重新施加 */
+let quickPoseBase: { action: QuickPoseAction; snapshot: PoseSnapshot } | null = null
+
+function restorePoseSnapshot(snapshot: PoseSnapshot): void {
+  for (const [name, value] of snapshot.bones) {
+    const bone = boneByName.get(name)
+    if (!bone) continue
+    bone.position.set(value.position[0], value.position[1], value.position[2])
+    bone.quaternion.set(value.quaternion[0], value.quaternion[1], value.quaternion[2], value.quaternion[3])
+    bone.scale.set(value.scale[0], value.scale[1], value.scale[2])
   }
-  if (!semanticRig || !rigInfo) return { ok: false, message: '该模型没有可用骨骼' }
+  if (current) current.updateMatrixWorld(true)
+}
+
+/** 按角度施加一次快捷姿态增量，返回动到几根骨骼 */
+function applyQuickPoseDelta(action: QuickPoseAction, step: number): number {
+  if (!semanticRig || !rigInfo) return 0
   const rig = rigInfo
   const roleMap = roleBoneMap(semanticRig)
-  const forward = rig.forward.clone().normalize()
   const right = rig.right.clone().normalize()
-  const label = QUICK_POSE_LABEL[action] ?? action
 
   const rotate = (role: BoneRole, axis: THREE.Vector3, degrees: number): boolean => {
     const name = roleMap.get(role)
@@ -1179,7 +1190,6 @@ function quickPose(action: QuickPoseAction, step = 12): { ok: boolean; message?:
     applyWorldDelta(bone, axis, degrees)
     return true
   }
-  /** 内收 / 外展：朝身体中轴转（左右各自算轴） */
   const rotateToward = (roles: [BoneRole, BoneRole], inward: boolean): number => {
     let moved = 0
     for (const role of roles) {
@@ -1192,57 +1202,71 @@ function quickPose(action: QuickPoseAction, step = 12): { ok: boolean; message?:
     return moved
   }
 
-  pushHistory(`快捷姿态 · ${label}`)
-  let moved = 0
   switch (action) {
     case 'legs-in':
-      moved = rotateToward(['thigh_L', 'thigh_R'], true)
-      break
+      return rotateToward(['thigh_L', 'thigh_R'], true)
     case 'legs-out':
-      moved = rotateToward(['thigh_L', 'thigh_R'], false)
-      break
+      return rotateToward(['thigh_L', 'thigh_R'], false)
     case 'legs-forward':
-      moved = Number(rotate('thigh_L', right, -step)) + Number(rotate('thigh_R', right, -step))
-      break
+      return Number(rotate('thigh_L', right, -step)) + Number(rotate('thigh_R', right, -step))
     case 'legs-back':
-      moved = Number(rotate('thigh_L', right, step)) + Number(rotate('thigh_R', right, step))
-      break
+      return Number(rotate('thigh_L', right, step)) + Number(rotate('thigh_R', right, step))
     case 'arms-in':
-      moved = rotateToward(['upperArm_L', 'upperArm_R'], true)
-      break
+      return rotateToward(['upperArm_L', 'upperArm_R'], true)
     case 'arms-out':
-      moved = rotateToward(['upperArm_L', 'upperArm_R'], false)
-      break
+      return rotateToward(['upperArm_L', 'upperArm_R'], false)
     case 'arms-forward':
-      moved = Number(rotate('upperArm_L', right, -step)) + Number(rotate('upperArm_R', right, -step))
-      break
+      return Number(rotate('upperArm_L', right, -step)) + Number(rotate('upperArm_R', right, -step))
     case 'arms-back':
-      moved = Number(rotate('upperArm_L', right, step)) + Number(rotate('upperArm_R', right, step))
-      break
+      return Number(rotate('upperArm_L', right, step)) + Number(rotate('upperArm_R', right, step))
     case 'head-down':
-      moved = Number(rotate('head', right, step))
-      break
+      return Number(rotate('head', right, step))
     case 'head-up':
-      moved = Number(rotate('head', right, -step))
-      break
+      return Number(rotate('head', right, -step))
     case 'lean-forward':
-      moved = Number(rotate('spine', right, step * 0.6)) + Number(rotate('chest', right, step * 0.4))
-      break
+      return Number(rotate('spine', right, step * 0.6)) + Number(rotate('chest', right, step * 0.4))
     case 'lean-back':
-      moved = Number(rotate('spine', right, -step * 0.6)) + Number(rotate('chest', right, -step * 0.4))
-      break
+      return Number(rotate('spine', right, -step * 0.6)) + Number(rotate('chest', right, -step * 0.4))
+    default:
+      return 0
   }
+}
 
-  if (moved === 0) {
-    return { ok: false, message: '该模型没识别到对应骨骼（可先看骨架页签的角色标签）' }
+/** 开始一个快捷姿态：记录基准姿态并压一行历史 */
+function beginQuickPose(action: QuickPoseAction): { ok: boolean; message?: string } {
+  if (action === 'reset') {
+    quickPoseBase = null
+    resetPose()
+    return { ok: true }
   }
-  if (current) current.updateMatrixWorld(true)
-  if (boneOverlay) updateSkeletonOverlay()
-  emitBoneTransform()
-  if (editSession) emitEditState()
+  if (!semanticRig || !rigInfo) return { ok: false, message: '该模型没有可用骨骼' }
+  pushHistory('快捷姿态 · ' + (QUICK_POSE_LABEL[action] ?? action))
+  quickPoseBase = { action, snapshot: captureSnapshot(QUICK_POSE_LABEL[action] ?? action) }
   return { ok: true }
 }
 
+/** 拖动滑杆：恢复基准后按当前角度重新施加（0° 等于没动） */
+function setQuickPoseAmount(action: QuickPoseAction, amount: number): { ok: boolean; message?: string } {
+  if (!quickPoseBase || quickPoseBase.action !== action) {
+    const started = beginQuickPose(action)
+    if (!started.ok) return started
+  }
+  if (!quickPoseBase) return { ok: false, message: '快捷姿态未初始化' }
+  restorePoseSnapshot(quickPoseBase.snapshot)
+  const moved = applyQuickPoseDelta(action, Math.abs(amount))
+  if (boneOverlay) updateSkeletonOverlay()
+  emitBoneTransform()
+  if (editSession) emitEditState()
+  if (moved === 0) {
+    return { ok: false, message: '该模型没识别到对应骨骼（可先看骨架页签的角色标签）' }
+  }
+  return { ok: true }
+}
+
+/** 结束调整：保留当前姿态，丢掉基准 */
+function endQuickPose(): void {
+  quickPoseBase = null
+}
 /* ------------------------------- 视口点选 ------------------------------- */
 
 const raycaster = new THREE.Raycaster()
@@ -2148,7 +2172,9 @@ defineExpose({
   playStoredAction,
   undo,
   redo,
-  quickPose,
+  beginQuickPose,
+  setQuickPoseAmount,
+  endQuickPose,
   applyBindPose,
   focusNode,
   playClip,
