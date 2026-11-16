@@ -1116,13 +1116,27 @@ function applyWorldDelta(bone: THREE.Bone, axis: THREE.Vector3, degrees: number)
 function boneDirection(bone: THREE.Bone): THREE.Vector3 {
   const head = new THREE.Vector3()
   bone.getWorldPosition(head)
-  for (const child of bone.children) {
-    if ((child as THREE.Bone).isBone) {
-      const tail = new THREE.Vector3()
-      child.getWorldPosition(tail)
-      return tail.sub(head).normalize()
+
+  // 用「最深的末端骨骼」当方向锚点：腿 -> 脚趾、手臂 -> 手指。
+  // 不能只用第一个子骨骼，Tripo 这类骨架里第一个子节点常是 twist 骨（位置和父骨几乎重合、
+  // 方向也不代表肢体走向），会导致内收变成乱转。
+  let deepest: { bone: THREE.Bone; depth: number } | null = null
+  const walk = (node: THREE.Bone, depth: number): void => {
+    for (const child of node.children) {
+      if (!(child as THREE.Bone).isBone) continue
+      const next = child as THREE.Bone
+      if (!deepest || depth + 1 > deepest.depth) deepest = { bone: next, depth: depth + 1 }
+      walk(next, depth + 1)
     }
   }
+  walk(bone, 0)
+  if (deepest) {
+    const tail = new THREE.Vector3()
+    ;(deepest as { bone: THREE.Bone }).bone.getWorldPosition(tail)
+    const direction = tail.sub(head)
+    if (direction.lengthSq() > 1e-6) return direction.normalize()
+  }
+
   const quat = new THREE.Quaternion()
   bone.getWorldQuaternion(quat)
   return new THREE.Vector3(0, 1, 0).applyQuaternion(quat).normalize()
