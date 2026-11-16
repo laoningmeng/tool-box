@@ -8,7 +8,6 @@ import {
   ArrowRight,
   Box,
   Brush,
-  Camera,
   Check,
   Delete,
   Download,
@@ -218,9 +217,7 @@ function handleMenuCommand(command: string): void {
     case 'locate':
       void reveal()
       break
-    case 'screenshot':
-      saveScreenshot()
-      break
+
     case 'back':
       void router.push('/models')
       break
@@ -251,9 +248,7 @@ function handleMenuCommand(command: string): void {
     case 'freeze-mesh':
       toggleFreezeMesh()
       break
-    case 'wireframe':
-      display.wireframe = !display.wireframe
-      break
+
     case 'grid':
       display.showGrid = !display.showGrid
       break
@@ -417,7 +412,6 @@ const display = reactive({
 
 
 const hiddenParts = reactive(new Set<string>())
-const presetColors = ['#0b1220', '#141a24', '#1e293b', '#0f172a', '#f4f6fb', '#2b2140']
 
 /* 选中高亮的外观：颜色 + 亮度，存 localStorage，下次打开还在 */
 const HL_PRESETS = ['#ffb74d', '#4f46e5', '#10b981', '#ef4444', '#22d3ee', '#ffffff']
@@ -1158,20 +1152,6 @@ function resetView(): void {
   ElMessage.success('视角已重置')
 }
 
-function saveScreenshot(): void {
-  const data = viewer.value?.screenshot()
-  if (!data) {
-    ElMessage.warning('画布还没准备好')
-    return
-  }
-  const link = document.createElement('a')
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  link.download = `${model.value?.name || 'model'}-${stamp}.png`
-  link.href = data
-  link.click()
-  ElMessage.success('截图已保存')
-}
-
 async function reveal(): Promise<void> {
   if (!model.value) return
   try {
@@ -1205,7 +1185,6 @@ async function reveal(): Promise<void> {
         <template #dropdown>
           <el-dropdown-menu>
             <el-dropdown-item command="locate" :disabled="!model">定位文件</el-dropdown-item>
-            <el-dropdown-item command="screenshot" :disabled="!model" divided>截图</el-dropdown-item>
             <el-dropdown-item command="back" divided>返回列表</el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -1243,9 +1222,7 @@ async function reveal(): Promise<void> {
             <el-dropdown-item command="freeze-mesh" divided>
               仅骨骼<span class="menu-hint">{{ display.freezeMesh ? '✓' : '' }}</span>
             </el-dropdown-item>
-            <el-dropdown-item command="wireframe">
-              线框<span class="menu-hint">{{ display.wireframe ? '✓' : '' }}</span>
-            </el-dropdown-item>
+
             <el-dropdown-item command="grid">
               网格<span class="menu-hint">{{ display.showGrid ? '✓' : '' }}</span>
             </el-dropdown-item>
@@ -1463,9 +1440,7 @@ async function reveal(): Promise<void> {
           <el-tooltip content="重置视角" placement="bottom">
             <el-button size="small" :icon="RefreshLeft" @click="resetView" />
           </el-tooltip>
-          <el-tooltip content="截图保存" placement="bottom">
-            <el-button size="small" :icon="Camera" @click="saveScreenshot" />
-          </el-tooltip>
+
           <span class="view-toolbar__sep" />
           <el-tooltip content="自动旋转" placement="bottom">
             <el-button
@@ -1483,15 +1458,7 @@ async function reveal(): Promise<void> {
               @click="display.showGrid = !display.showGrid"
             />
           </el-tooltip>
-          <el-tooltip content="线框模式" placement="bottom">
-            <el-button
-              size="small"
-              :type="display.wireframe ? 'primary' : 'default'"
-              @click="display.wireframe = !display.wireframe"
-            >
-              线框
-            </el-button>
-          </el-tooltip>
+
           <el-tooltip content="显示骨架" placement="bottom">
             <el-button
               size="small"
@@ -1538,8 +1505,7 @@ async function reveal(): Promise<void> {
               <p class="hl__hint">只影响选中部件/骨骼的高亮，不改模型材质</p>
             </div>
           </el-popover>
-          <span class="view-toolbar__sep" />
-          <el-color-picker v-model="display.background" size="small" :predefine="presetColors" />
+
           <span class="view-toolbar__label">光照</span>
           <el-slider v-model="display.exposure" :min="0.3" :max="2.5" :step="0.1" size="small" class="view-toolbar__slider" />
         </div>
@@ -2344,7 +2310,7 @@ async function reveal(): Promise<void> {
   color: var(--accent);
 }
 
-.part-row.is-hidden .part-row__note {
+.part-row__note {
   flex: none;
   display: grid;
   place-items: center;
@@ -2401,7 +2367,7 @@ async function reveal(): Promise<void> {
   height: 22px;
 }
 
-.part-row__eye {
+.part-row.is-hidden .part-row__eye {
   border-color: color-mix(in srgb, var(--danger) 50%, transparent);
   color: var(--danger);
 }
