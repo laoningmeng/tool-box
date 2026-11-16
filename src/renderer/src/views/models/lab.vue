@@ -168,6 +168,10 @@ function toggleFloating(): void {
 
 function startPanelDrag(event: PointerEvent): void {
   if (!inspectorFloating.value) return
+  // 点在按钮/页签上时不启动拖动：
+  // 一旦 setPointerCapture 到标题栏，click 会被捕获到标题栏，按钮就收不到点击事件
+  const target = event.target as HTMLElement | null
+  if (target?.closest('button, input, .el-button, .inspector-head__actions, .inspector-tabs')) return
   panelDrag = {
     pointerId: event.pointerId,
     startX: event.clientX,
