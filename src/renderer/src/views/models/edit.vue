@@ -50,7 +50,6 @@ const historyState = ref({ undo: 0, redo: 0 })
 const saving = ref(false)
 const started = ref(false)
 
-const search = ref('')
 const selectedBoneId = ref('')
 const boneTransform = ref<{
   position: { x: number; y: number; z: number }
@@ -65,17 +64,15 @@ const display = reactive({
   freezeMesh: false
 })
 
-const bones = computed(() => {
-  const keyword = search.value.trim().toLowerCase()
-  const list = structure.value?.bones ?? []
-  if (!keyword) return list
-  return list.filter((bone) => {
-    const role = semantics.value?.roles[bone.id] ?? ''
-    return bone.name.toLowerCase().includes(keyword) || role.includes(search.value.trim())
-  })
-})
+const selectedBone = computed(
+  () => structure.value?.bones.find((bone) => bone.id === selectedBoneId.value) ?? null
+)
 
-const selectedBone = computed(() => bones.value.find((bone) => bone.id === selectedBoneId.value) ?? null)
+const selectedRole = computed(() => {
+  if (!selectedBoneId.value) return ''
+  const label = semantics.value?.roles[selectedBoneId.value] ?? ''
+  return label ? shortRole(label) : ''
+})
 const editing = computed(() => Boolean(editState.value?.editing))
 const editName = computed(() => editState.value?.name ?? '精修')
 const fps = computed(() => editState.value?.fps ?? 30)
@@ -393,32 +390,6 @@ onBeforeUnmount(() => {
     <el-alert v-if="errorText" :title="errorText" type="error" :closable="false" show-icon />
 
     <div class="edit-body">
-      <!-- 左：骨骼列表 -->
-      <aside class="edit-panel edit-bones">
-        <div class="edit-panel__head">
-          <span>骨架 {{ structure?.bones.length ?? 0 }}</span>
-          <span v-if="selectedBone" class="edit-panel__sub">{{ selectedBone.name }}</span>
-        </div>
-        <el-input v-model="search" placeholder="搜索骨骼或角色" size="small" :prefix-icon="Search" clearable />
-        <div class="edit-bone-list">
-          <button
-            v-for="bone in bones"
-            :key="bone.id"
-            type="button"
-            class="edit-bone"
-            :class="{ 'is-active': selectedBoneId === bone.id }"
-            :style="{ paddingLeft: `${6 + bone.depth * 8}px` }"
-            @click="selectBone(bone.id)"
-          >
-            <span class="edit-bone__name" :title="bone.name">{{ bone.name }}</span>
-            <span v-if="semantics?.roles[bone.id]" class="edit-bone__role">
-              {{ shortRole(semantics.roles[bone.id]) }}
-            </span>
-          </button>
-          <p v-if="bones.length === 0" class="edit-empty">没有匹配的骨骼</p>
-        </div>
-      </aside>
-
       <!-- 中：视口 + 时间轴 -->
       <section class="edit-main">
         <div class="edit-stage">
@@ -510,6 +481,25 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-if="selectedBone">
+          <div class="edit-info">
+            <div class="edit-info__row">
+              <span>名称</span>
+              <span class="mono edit-info__value" :title="selectedBone.name">{{ selectedBone.name }}</span>
+            </div>
+            <div class="edit-info__row">
+              <span>角色</span>
+              <el-tag v-if="selectedRole" size="small" effect="light" type="success">{{ selectedRole }}</el-tag>
+              <span v-else class="edit-info__value text-muted">未识别</span>
+            </div>
+            <div class="edit-info__row">
+              <span>层级</span>
+              <span class="num edit-info__value">第 {{ selectedBone.depth + 1 }} 层</span>
+            </div>
+            <div class="edit-info__row">
+              <span>子骨骼</span>
+              <span class="num edit-info__value">{{ selectedBone.childCount }}</span>
+            </div>
+          </div>
           <div class="edit-vec">
             <span class="edit-vec__label">位置</span>
             <el-input
@@ -539,7 +529,7 @@ onBeforeUnmount(() => {
             <el-button size="small" @click="resetAllPose">复位全部姿态</el-button>
           </div>
         </template>
-        <p v-else class="edit-empty">在左边或视口里点一根骨骼开始</p>
+        <p v-else class="edit-empty">在视口里点关节球选中骨骼，选中后这里显示属性和关键帧</p>
 
         <div class="edit-panel__head">
           关键帧
@@ -605,7 +595,7 @@ onBeforeUnmount(() => {
 
 .edit-body {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr) 264px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 10px;
   flex: 1;
   min-height: 0;
@@ -646,7 +636,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.edit-bone-list,
 .edit-key-list {
   display: flex;
   flex-direction: column;
@@ -656,41 +645,31 @@ onBeforeUnmount(() => {
   overflow-y: auto;
 }
 
-.edit-bone {
+.edit-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  flex: none;
+}
+
+.edit-info__row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11.5px;
-  text-align: left;
-  cursor: pointer;
+  color: var(--text-tertiary);
 }
 
-.edit-bone:hover {
-  background: var(--bg-hover);
-}
-
-.edit-bone.is-active {
-  background: var(--accent-softer);
-  color: var(--accent);
-}
-
-.edit-bone__name {
-  flex: 1;
-  min-width: 0;
+.edit-info__value {
+  color: var(--text-primary);
+  max-width: 170px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.edit-bone__role {
-  flex: none;
-  font-size: 10px;
-  color: var(--text-tertiary);
 }
 
 .edit-main {
