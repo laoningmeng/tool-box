@@ -243,7 +243,7 @@ function handleMenuCommand(command: string): void {
       void appStore.toggleFocusMode()
       break
     case 'freeze-mesh':
-      display.freezeMesh = !display.freezeMesh
+      toggleFreezeMesh()
       break
     case 'wireframe':
       display.wireframe = !display.wireframe
@@ -370,15 +370,11 @@ const display = reactive({
   showGrid: true,
   wireframe: false,
   showSkeleton: true,
-  freezeMesh: localStorage.getItem('lab:freeze-mesh') === '1',
+  freezeMesh: false,
   background: '#0b1220',
   exposure: 1
 })
 
-watch(
-  () => display.freezeMesh,
-  (value) => localStorage.setItem('lab:freeze-mesh', value ? '1' : '0')
-)
 
 const hiddenParts = reactive(new Set<string>())
 const presetColors = ['#0b1220', '#141a24', '#1e293b', '#0f172a', '#f4f6fb', '#2b2140']
@@ -451,12 +447,23 @@ const editMode = ref<'pose' | 'bind'>('pose')
 function setEditMode(mode: 'pose' | 'bind'): void {
   editMode.value = mode
   if (mode === 'bind') {
+    // 绑定：网格冻结，只看骨架，挪完再「应用为绑定姿态」
     display.freezeMesh = true
     gizmoMode.value = 'translate'
   } else {
+    // 姿态：网格必须跟着骨骼变形
     display.freezeMesh = false
     if (gizmoMode.value === 'off') gizmoMode.value = 'rotate'
   }
+}
+
+/** 「仅骨骼」开关与编辑模式保持一致：开会切到绑定，关会切回姿态 */
+function toggleFreezeMesh(): void {
+  const next = !display.freezeMesh
+  display.freezeMesh = next
+  editMode.value = next ? 'bind' : 'pose'
+  if (next) gizmoMode.value = 'translate'
+  else if (gizmoMode.value === 'off') gizmoMode.value = 'rotate'
 }
 
 function applyBindPoseAction(): void {
@@ -1321,7 +1328,7 @@ async function reveal(): Promise<void> {
               size="small"
               :icon="display.freezeMesh ? Lock : Unlock"
               :type="display.freezeMesh ? 'primary' : 'default'"
-              @click="display.freezeMesh = !display.freezeMesh"
+              @click="toggleFreezeMesh"
             >
               仅骨骼
             </el-button>
