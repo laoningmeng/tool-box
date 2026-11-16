@@ -46,6 +46,7 @@ export const IPC = {
     removeGroup: 'model:remove-group',
     saveAction: 'model:save-action',
     removeAction: 'model:remove-action',
+    setPartNote: 'model:set-part-note',
     exportGroup: 'model:export-group'
   },
   modelConfig: {

@@ -275,6 +275,8 @@ export interface ModelAsset {
   groups?: ModelPartGroup[]
   /** 绑定到模型的动作（动作库生成 / 精修后保存） */
   actions?: ModelAction[]
+  /** 部件备注（part 结构路径 -> 备注文字），仅本地辅助，不写入模型文件 */
+  partNotes?: Record<string, string>
   createdAt: string
   updatedAt: string
   /** 查询时实时计算（文件是否还在），不落库 */
@@ -411,6 +413,8 @@ export interface ModelApi {
   /** 保存一帧精修后的动作，绑定到模型 */
   saveAction(modelId: string, input: ModelActionInput): Promise<ModelAction>
   removeAction(modelId: string, actionId: string): Promise<{ ok: boolean }>
+  /** 保存部件备注（空字符串 = 清除），返回该模型最新的备注表 */
+  setPartNote(modelId: string, partKey: string, note: string): Promise<Record<string, string>>
   /**
    * 导出一组部件为 glb 文件，并自动登记进模型库。
    * 不传 targetPath 时弹保存对话框（自动化测试可直接给路径）。

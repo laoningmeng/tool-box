@@ -100,6 +100,8 @@ const api: BridgeApi = {
       ipcRenderer.invoke(IPC.model.saveAction, modelId, input),
     removeAction: (modelId: string, actionId: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(IPC.model.removeAction, modelId, actionId),
+    setPartNote: (modelId: string, partKey: string, note: string): Promise<Record<string, string>> =>
+      ipcRenderer.invoke(IPC.model.setPartNote, modelId, partKey, note),
     exportGroup: (payload: {
       modelId: string
       name: string

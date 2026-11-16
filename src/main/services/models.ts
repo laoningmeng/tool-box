@@ -324,6 +324,22 @@ export function saveModelAction(modelId: string, input: ModelActionInput): Model
   return action
 }
 
+/** 部件备注：只存在本地库里，不写进模型文件；空字符串表示清除 */
+export function setModelPartNote(modelId: string, partKey: string, note: string): Record<string, string> {
+  const model = requireModel(modelId)
+  const key = String(partKey ?? '').trim()
+  if (!key || key.length > 64) throw new Error('部件标识不合法')
+  const text = String(note ?? '').trim().slice(0, 24)
+  const notes: Record<string, string> = { ...(model.partNotes ?? {}) }
+  if (text) notes[key] = text
+  else delete notes[key]
+  model.partNotes = notes
+  model.updatedAt = now()
+  persist()
+  log('info', '部件备注', `${model.name} / ${key} -> ${text || '(清除)'}`)
+  return notes
+}
+
 export function removeModelAction(modelId: string, actionId: string): { ok: boolean } {
   const model = requireModel(modelId)
   const before = model.actions?.length ?? 0

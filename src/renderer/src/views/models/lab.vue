@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -464,7 +464,57 @@ function match(name: string): boolean {
   return !keyword || name.toLowerCase().includes(keyword)
 }
 
-const parts = computed(() => (structure.value?.parts ?? []).filter((item) => match(item.name)))
+/* -------------------------------- 部件备注 -------------------------------- */
+const partNotes = computed(() => model.value?.partNotes ?? {})
+const editingNoteKey = ref('')
+const noteDraft = ref('')
+
+/** 列表主标题：有备注就用备注，否则用部件类型 */
+function partLabel(part: { type: string; key: string }): string {
+  const note = partNotes.value[part.key]
+  return note || PART_TYPE_LABEL[part.type] || part.type
+}
+
+function isNoteEditing(part: { key: string }): boolean {
+  return editingNoteKey.value === part.key
+}
+
+function startEditNote(part: { key: string }): void {
+  editingNoteKey.value = part.key
+  noteDraft.value = partNotes.value[part.key] ?? ''
+  void nextTick(() => {
+    const input = document.querySelector<HTMLInputElement>('.part-row__note-input input')
+    input?.focus()
+    input?.select()
+  })
+}
+
+function cancelEditNote(): void {
+  editingNoteKey.value = ''
+  noteDraft.value = ''
+}
+
+async function savePartNote(part: { key: string }): Promise<void> {
+  if (editingNoteKey.value !== part.key) return
+  const text = noteDraft.value.trim()
+  editingNoteKey.value = ''
+  noteDraft.value = ''
+  if ((partNotes.value[part.key] ?? '') === text) return
+  try {
+    const notes = await window.api.model.setPartNote(modelId.value, part.key, text)
+    if (model.value) model.value = { ...model.value, partNotes: notes }
+    if (text) ElMessage.success(`备注已保存：${text}`)
+    else ElMessage.success('备注已清除')
+  } catch (error) {
+    ElMessage.error(`保存备注失败：${(error as Error).message}`)
+  }
+}
+
+const parts = computed(() =>
+  (structure.value?.parts ?? []).filter(
+    (item) => match(item.name) || match(partNotes.value[item.key] ?? '')
+  )
+)
 const bones = computed(() => (structure.value?.bones ?? []).filter((item) => match(item.name)))
 const visibleCount = computed(() => (structure.value?.parts ?? []).filter((p) => !hiddenParts.has(p.id)).length)
 
@@ -1317,13 +1367,36 @@ async function reveal(): Promise<void> {
 
               <div
                 class="part-row__body"
-                :title="`${PART_TYPE_LABEL[part.type] ?? part.type} (${part.name})  ·  ${part.triangles.toLocaleString('zh-CN')} 面 · ${part.vertices.toLocaleString('zh-CN')} 顶点`"
+                :title="`${partLabel(part)} (${part.name})  ·  ${part.triangles.toLocaleString('zh-CN')} 面 · ${part.vertices.toLocaleString('zh-CN')} 顶点`"
               >
-                <div class="part-row__title">
-                  <span class="part-row__type">{{ PART_TYPE_LABEL[part.type] ?? part.type }}</span>
+                <el-input
+                  v-if="isNoteEditing(part)"
+                  v-model="noteDraft"
+                  size="small"
+                  maxlength="24"
+                  placeholder="给这个部件起个名字，如：左臂 / 枪械 / 头部"
+                  class="part-row__note-input"
+                  @click.stop
+                  @keyup.enter.stop="savePartNote(part)"
+                  @keyup.esc.stop="cancelEditNote"
+                  @blur="savePartNote(part)"
+                />
+                <div v-else class="part-row__title" @dblclick.stop="startEditNote(part)">
+                  <span class="part-row__type" :class="{ 'is-note': Boolean(partNotes[part.key]) }">
+                    {{ partLabel(part) }}
+                  </span>
                   <span class="part-row__name">({{ part.name }})</span>
                 </div>
               </div>
+
+              <button
+                class="part-row__note"
+                type="button"
+                :title="partNotes[part.key] ? '修改备注' : '添加备注'"
+                @click.stop="startEditNote(part)"
+              >
+                <el-icon><EditPen /></el-icon>
+              </button>
 
               <button
                 class="part-row__eye"
@@ -2194,6 +2267,63 @@ async function reveal(): Promise<void> {
 }
 
 
+.part-row__note {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) linear, color var(--dur-fast) linear;
+}
+
+.part-row:hover .part-row__note,
+.part-row.is-checked .part-row__note,
+.part-row__note:focus-visible {
+  opacity: 1;
+}
+
+.part-row__note:hover {
+  color: var(--accent);
+}
+
+.part-row__note :deep(.el-icon) {
+  font-size: 12px;
+}
+
+.part-row__title {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.part-row__type.is-note {
+  color: var(--accent);
+}
+
+.part-row__note-input {
+  width: 100%;
+}
+
+.part-row__note-input :deep(.el-input__wrapper) {
+  padding: 0 6px;
+  height: 22px;
+}
+
+.part-row__note-input :deep(.el-input__inner) {
+  font-size: 11.5px;
+  height: 22px;
+}
+
 .part-row__eye {
   flex: none;
   display: grid;
@@ -2214,7 +2344,64 @@ async function reveal(): Promise<void> {
   color: var(--accent);
 }
 
-.part-row.is-hidden .part-row__eye {
+.part-row.is-hidden .part-row__note {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) linear, color var(--dur-fast) linear;
+}
+
+.part-row:hover .part-row__note,
+.part-row.is-checked .part-row__note,
+.part-row__note:focus-visible {
+  opacity: 1;
+}
+
+.part-row__note:hover {
+  color: var(--accent);
+}
+
+.part-row__note :deep(.el-icon) {
+  font-size: 12px;
+}
+
+.part-row__title {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.part-row__type.is-note {
+  color: var(--accent);
+}
+
+.part-row__note-input {
+  width: 100%;
+}
+
+.part-row__note-input :deep(.el-input__wrapper) {
+  padding: 0 6px;
+  height: 22px;
+}
+
+.part-row__note-input :deep(.el-input__inner) {
+  font-size: 11.5px;
+  height: 22px;
+}
+
+.part-row__eye {
   border-color: color-mix(in srgb, var(--danger) 50%, transparent);
   color: var(--danger);
 }

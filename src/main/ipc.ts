@@ -59,6 +59,7 @@ import {
   saveModelAction,
   saveModelConfig,
   saveModelGroup,
+  setModelPartNote,
   summarizeModels,
   testModelKey,
   updateModel
@@ -294,6 +295,9 @@ export function registerIpc(): void {
   )
   ipcMain.handle(IPC.model.removeAction, (_event, modelId: string, actionId: string) =>
     removeModelAction(modelId, actionId)
+  )
+  ipcMain.handle(IPC.model.setPartNote, (_event, modelId: string, partKey: string, note: string) =>
+    setModelPartNote(modelId, partKey, note)
   )
   ipcMain.handle(
     IPC.model.exportGroup,
