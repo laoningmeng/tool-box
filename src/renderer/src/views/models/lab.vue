@@ -200,7 +200,7 @@ function showShortcuts(): void {
     '<div style="line-height:2;font-size:12.5px">' +
       '<b>通用</b>　Ctrl+Z 撤销 · Ctrl+Y 恢复<br/>' +
       '<b>精修</b>　← → 逐帧 · K 记关键帧 · 空格 播放/暂停<br/>' +
-      '<b>骨骼编辑</b>　视口里点骨骼节点即选中 · W 旋转 / E 移动 / R 缩放 · F 聚焦选中<br/>' +
+      '<b>骨骼编辑</b>　视口里点骨骼节点即选中 · W 旋转 / E 移动 / R 缩放 · F 聚焦选中 · Esc 取消选中<br/>' +
       '<b>模式</b>　姿态=转骨骼看网格形变；绑定=网格冻结只挪骨骼，调完「应用为绑定姿态」<br/>' +
       '<b>视图</b>　「全屏」进入专注模式 ·「仅骨骼」冻结网格形变' +
       '</div>',
@@ -226,6 +226,9 @@ function handleMenuCommand(command: string): void {
       break
     case 'redo':
       redoEdit()
+      break
+    case 'deselect':
+      deselectAll()
       break
     case 'reset-bone':
       resetSelectedBone()
@@ -573,6 +576,16 @@ function onEditKey(event: KeyboardEvent): void {
   const tag = (event.target as HTMLElement | null)?.tagName ?? ''
   if (tag === 'INPUT' || tag === 'TEXTAREA' || (event.target as HTMLElement | null)?.isContentEditable) return
 
+  // Esc 取消选中（有弹窗先交给弹窗）
+  if (event.key === 'Escape') {
+    const dialogOpen = Boolean(document.querySelector('.el-overlay, .el-message-box, .el-dialog'))
+    if (!dialogOpen && (selectedId.value || selectedKeys.value.length > 0)) {
+      event.preventDefault()
+      deselectAll()
+    }
+    return
+  }
+
   // Ctrl/⌘ + Z 撤销，Ctrl/⌘ + Y 或 Shift+Ctrl/⌘+Z 恢复
   const mod = event.ctrlKey || event.metaKey
   if (mod && (event.key === 'z' || event.key === 'Z')) {
@@ -821,6 +834,16 @@ function selectBone(id: string): void {
   selectedId.value = id
   selectedKind.value = 'bone'
   viewer.value?.selectNode(id)
+}
+
+/** 取消选中（Esc / 编辑菜单）：清高亮、收起手柄、清空多选 */
+function deselectAll(): void {
+  if (!selectedId.value && selectedKeys.value.length === 0) return
+  selectedId.value = ''
+  selectedKind.value = ''
+  selectedKeys.value = []
+  boneTransform.value = null
+  viewer.value?.clearSelection()
 }
 
 /** 双击或点「聚焦」才推镜头，单击只高亮，避免把整体视图拉飞 */
@@ -1083,6 +1106,9 @@ async function reveal(): Promise<void> {
             </el-dropdown-item>
             <el-dropdown-item command="redo" :disabled="historyState.redo === 0">
               恢复<span class="menu-hint">Ctrl+Y</span>
+            </el-dropdown-item>
+            <el-dropdown-item command="deselect" :disabled="!selectedId && selectedKeys.length === 0">
+              取消选中<span class="menu-hint">Esc</span>
             </el-dropdown-item>
             <el-dropdown-item command="reset-bone" :disabled="!selectedBoneId" divided>复位该骨骼</el-dropdown-item>
             <el-dropdown-item command="reset-pose" :disabled="!structure?.bones.length">复位全部姿态</el-dropdown-item>

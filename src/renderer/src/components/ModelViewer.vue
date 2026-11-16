@@ -556,6 +556,19 @@ function resetBone(id: string): void {
   if (boneOverlay) updateSkeletonOverlay()
 }
 
+/** 取消选中：清高亮、摘手柄、清记录 */
+function clearSelection(): void {
+  selectionId = ''
+  lastHighlight = null
+  selectedBone = null
+  clearSelectionVisual()
+  if (gizmo) {
+    gizmo.detach()
+    gizmo.getHelper().visible = false
+  }
+  if (boneOverlay) updateSkeletonOverlay()
+}
+
 function resetPose(): void {
   pushHistory('复位姿态')
   stopAnimationForEdit()
@@ -2121,6 +2134,7 @@ defineExpose({
   setBoneTransform,
   resetBone,
   resetPose,
+  clearSelection,
   beginEdit,
   endEdit,
   playEdit,
