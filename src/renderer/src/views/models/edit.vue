@@ -23,6 +23,7 @@ import {
 import ModelViewer from '@renderer/components/ModelViewer.vue'
 import type { ClipEditState, SemanticSummary, ViewerStructure } from '@renderer/components/model-viewer-types'
 import type { ActionKind } from '@renderer/rig/types'
+import type { QuickPoseAction } from '@renderer/components/model-viewer-types'
 import { useModelStore } from '@renderer/stores/models'
 import { useAppStore } from '@renderer/stores/app'
 import type { ModelAction, ModelAsset } from '@shared/types'
@@ -206,6 +207,64 @@ function deselect(): void {
   viewer.value?.clearSelection()
 }
 
+/* ------------------------------ 快捷姿态 ------------------------------ */
+
+const QUICK_POSES: Array<{ action: QuickPoseAction; label: string }> = [
+  { action: 'legs-in', label: '双腿内收' },
+  { action: 'legs-out', label: '双腿外展' },
+  { action: 'legs-forward', label: '双腿前摆' },
+  { action: 'legs-back', label: '双腿后摆' },
+  { action: 'arms-in', label: '双臂内收' },
+  { action: 'arms-out', label: '双臂外展' },
+  { action: 'arms-forward', label: '双臂前摆' },
+  { action: 'arms-back', label: '双臂后摆' },
+  { action: 'head-down', label: '低头' },
+  { action: 'head-up', label: '抬头' },
+  { action: 'lean-forward', label: '身体前倾' },
+  { action: 'lean-back', label: '身体后仰' }
+]
+
+const quickOpen = ref(true)
+const quickAction = ref<QuickPoseAction | ''>('')
+const quickAmount = ref(12)
+
+const quickActionLabel = computed(() => {
+  if (!quickAction.value) return ''
+  return QUICK_POSES.find((item) => item.action === quickAction.value)?.label ?? quickAction.value
+})
+
+/** 点快捷姿态按钮：按 12° 施加，下方出现滑杆 */
+function applyQuickPose(action: QuickPoseAction): void {
+  if (action === 'reset') {
+    viewer.value?.endQuickPose()
+    quickAction.value = ''
+    const result = viewer.value?.beginQuickPose('reset')
+    if (!result?.ok) ElMessage.warning(result?.message ?? '重置失败')
+    return
+  }
+  quickAmount.value = 12
+  const result = viewer.value?.setQuickPoseAmount(action, quickAmount.value)
+  if (!result?.ok) {
+    quickAction.value = ''
+    ElMessage.warning(result?.message ?? '该动作不可用')
+    return
+  }
+  quickAction.value = action
+}
+
+function handleQuickAmount(value: number | number[]): void {
+  const amount = Array.isArray(value) ? value[0] : value
+  quickAmount.value = amount
+  if (!quickAction.value) return
+  const result = viewer.value?.setQuickPoseAmount(quickAction.value, amount)
+  if (!result?.ok) ElMessage.warning(result?.message ?? '调整失败')
+}
+
+function finishQuickPose(): void {
+  viewer.value?.endQuickPose()
+  quickAction.value = ''
+}
+
 /* ------------------------------ 冻结 / 重置姿态 ------------------------------ */
 
 function toggleFreezeSelected(): void {
@@ -221,6 +280,8 @@ function toggleFreezeSelected(): void {
 }
 
 function resetPose(): void {
+  viewer.value?.endQuickPose()
+  quickAction.value = ''
   viewer.value?.resetPose()
   ElMessage.success('已重置为绑定姿态')
 }
@@ -658,6 +719,49 @@ onBeforeUnmount(() => {
           </div>
         </template>
 
+        <div class="edit-quick">
+          <button type="button" class="edit-quick__head" @click="quickOpen = !quickOpen">
+            <span class="edit-quick__caret">{{ quickOpen ? '▾' : '▸' }}</span>
+            <span>快捷姿态</span>
+            <span class="edit-panel__sub">{{ QUICK_POSES.length + 1 }}</span>
+          </button>
+          <template v-if="quickOpen">
+            <div class="edit-quick__grid">
+              <el-button
+                v-for="item in QUICK_POSES"
+                :key="item.action"
+                size="small"
+                :type="quickAction === item.action ? 'primary' : 'default'"
+                @click="applyQuickPose(item.action)"
+              >
+                {{ item.label }}
+              </el-button>
+              <el-button size="small" type="primary" plain @click="applyQuickPose('reset')">
+                重置姿态
+              </el-button>
+            </div>
+            <div v-if="quickAction" class="edit-quick__amount">
+              <div class="edit-quick__amount-head">
+                <span>{{ quickActionLabel }}</span>
+                <span class="num">{{ quickAmount }}°</span>
+              </div>
+              <el-slider
+                :model-value="quickAmount"
+                :min="0"
+                :max="60"
+                :step="1"
+                :show-tooltip="false"
+                size="small"
+                @input="handleQuickAmount"
+              />
+              <el-button size="small" @click="finishQuickPose">完成</el-button>
+            </div>
+            <p class="edit-hint">
+              {{ quickAction ? '拖滑杆调程度，点「完成」收起；再用「记整帧」把这一帧写成关键帧' : '点一个动作调整姿势；调整后点「记整帧」把这些骨骼写成当前帧关键帧' }}
+            </p>
+          </template>
+        </div>
+
         <p class="edit-hint">
           共 {{ editState?.keyCount ?? 0 }} 个关键帧 · ←/→ 逐帧 · K 记帧 · 空格播放 · W/E/R 切工具
         </p>
@@ -715,7 +819,8 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-color);
   background: var(--bg-surface);
   box-shadow: var(--shadow-sm);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .edit-panel__head {
@@ -747,6 +852,78 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+.edit-quick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-color);
+  flex: none;
+}
+
+.edit-quick__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.edit-quick__head:hover {
+  color: var(--text-secondary);
+}
+
+.edit-quick__caret {
+  width: 10px;
+  font-size: 10px;
+}
+
+.edit-quick__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.edit-quick__grid :deep(.el-button) {
+  margin-left: 0;
+  padding: 0 6px;
+  font-size: 11.5px;
+  height: 26px;
+}
+
+.edit-quick__amount {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.edit-quick__amount-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.edit-quick__amount :deep(.el-slider) {
+  padding: 0 4px;
+}
+
+.edit-quick__amount :deep(.el-button) {
+  align-self: flex-end;
+  margin-left: 0;
 }
 
 .edit-bone-names {

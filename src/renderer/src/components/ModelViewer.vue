@@ -1000,9 +1000,14 @@ function recordAllKeys(): { ok: boolean; count: number } {
   if (!editSession) return { ok: false, count: 0 }
   pushHistory('记录整帧')
   let count = 0
-  for (const [boneName, track] of editSession.tracks) {
-    const bone = boneByName.get(boneName)
-    if (!bone) continue
+  // 记录「整帧」= 当前姿态快照：动作原本没动的骨骼（比如快捷姿态刚摆的）也要补上轨道，
+  // 否则它们只在暂停时看着对，一播放/跳帧就丢。
+  for (const bone of boneObjects.values()) {
+    let track = editSession.tracks.get(bone.name)
+    if (!track) {
+      track = { times: [], quats: [] }
+      editSession.tracks.set(bone.name, track)
+    }
     setKey(track, editTime, bone.quaternion)
     count += 1
   }
