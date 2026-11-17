@@ -305,7 +305,22 @@ async function bakeToModel(): Promise<void> {
   try {
     const updated = await window.api.model.saveBindPose(modelId.value, pose)
     model.value = updated
-    ElMessage.success(`已烘焙 ${pose.length} 根骨骼为绑定姿态，回实验台播放动作即可看到效果`)
+    const kind = route.query.type === 'library' ? (String(route.query.kind ?? '') as ActionKind) : ''
+    if (kind) {
+      // 动作库生成的动作是「相对绑定姿态」算出来的，烘焙后必须按新姿态重新生成，
+      // 否则正在编辑的这段轨道还是旧基准，播放时会变回原来的姿势。
+      const resumeTime = editState.value?.time ?? 0
+      viewer.value?.endEdit()
+      const regenerated = viewer.value?.beginEdit({ kind, origin: 'library' })
+      if (regenerated?.ok) viewer.value?.seekEdit(resumeTime)
+      ElMessage.success(
+        `已烘焙 ${pose.length} 根骨骼为绑定姿态，当前动作已按新姿态重新生成（可直接播放查看）`
+      )
+    } else {
+      ElMessage.success(
+        `已烘焙 ${pose.length} 根骨骼为绑定姿态；当前片段是原生/已绑定动作（绝对关键帧），烘焙只影响动作库生成的动作，回实验台播放动作库即可看到新姿态`
+      )
+    }
   } catch (error) {
     ElMessage.error(`保存失败：${(error as Error).message}`)
   }
@@ -567,7 +582,7 @@ onBeforeUnmount(() => {
         </el-tooltip>
         <span class="edit-head__sep" />
         <el-button size="small" :icon="Refresh" @click="resetPose">重置姿态</el-button>
-        <el-tooltip content="把当前姿势存成模型的新绑定姿态：之后动作库生成的动作都以它为基础" placement="bottom">
+        <el-tooltip content="把当前姿势存成模型的新绑定姿态：动作库生成的动作都以它为基础（原生/已绑定片段不受影响）" placement="bottom">
           <el-button size="small" :icon="MagicStick" @click="bakeToModel">烘焙到模型</el-button>
         </el-tooltip>
         <el-button v-if="model?.bindPose?.length" size="small" @click="clearBake">清除烘焙</el-button>
