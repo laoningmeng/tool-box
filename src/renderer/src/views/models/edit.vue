@@ -149,7 +149,8 @@ function handleSelectBones(ids: string[]): void {
     if (transform) boneTransform.value = transform
   } else {
     boneTransform.value = null
-    viewer.value?.clearSelection()
+    // 多选：手柄挂到质心，可整组移动/旋转
+    viewer.value?.setBoneGroup(ids)
   }
 }
 

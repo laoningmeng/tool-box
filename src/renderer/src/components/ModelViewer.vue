@@ -125,6 +125,14 @@ let boneOverlay: {
 let selectedBone: THREE.Bone | null = null
 /** 骨骼编辑 gizmo（TransformControls） */
 let gizmo: TransformControls | null = null
+/** 多选骨骼的组变换：手柄挂在一个「质心指挥棒」上，拖动时把同一个世界增量套给每根骨骼 */
+let groupPivot: THREE.Object3D | null = null
+let groupBoneIds: string[] = []
+let groupStart: null | {
+  pivotPos: THREE.Vector3
+  pivotQuat: THREE.Quaternion
+  items: Array<{ bone: THREE.Bone; worldPos: THREE.Vector3; worldQuat: THREE.Quaternion }>
+} = null
 /** 冻结网格时换上的「定格骨架」：原始 skeleton -> 冻结点 */
 const frozenSkeletons = new Map<THREE.SkinnedMesh, THREE.Skeleton>()
 /** 绑定姿态下的局部变换，用于「复位」 */
@@ -489,7 +497,7 @@ function emitBoneTransform(): void {
   })
 }
 
-function attachGizmo(bone: THREE.Bone | null): void {
+function attachGizmo(bone: THREE.Object3D | null): void {
   if (!gizmo) return
   const helper = gizmo.getHelper()
   if (!bone || props.gizmoMode === 'off') {
@@ -500,6 +508,110 @@ function attachGizmo(bone: THREE.Bone | null): void {
   gizmo.setMode(props.gizmoMode)
   gizmo.attach(bone)
   helper.visible = true
+}
+
+/** 多选骨骼：手柄挂到质心，拖动时整组一起动 */
+function setBoneGroup(ids: string[]): void {
+  groupBoneIds = ids
+  groupStart = null
+  if (ids.length === 1) {
+    selectNode(ids[0])
+    return
+  }
+  if (!scene) return
+  if (!groupPivot) {
+    groupPivot = new THREE.Object3D()
+    groupPivot.name = 'group-pivot'
+    scene.add(groupPivot)
+  }
+  if (ids.length === 0) {
+    selectedBone = null
+    attachGizmo(null)
+    return
+  }
+  const center = new THREE.Vector3()
+  let count = 0
+  for (const id of ids) {
+    const bone = boneObjects.get(id)
+    if (!bone) continue
+    bone.getWorldPosition(_v)
+    center.add(_v)
+    count += 1
+  }
+  if (count === 0) {
+    attachGizmo(null)
+    return
+  }
+  center.divideScalar(count)
+  groupPivot.position.copy(center)
+  groupPivot.quaternion.identity()
+  groupPivot.scale.set(1, 1, 1)
+  groupPivot.updateMatrixWorld(true)
+  selectedBone = null
+  attachGizmo(groupPivot)
+}
+
+/** 拖动开始时记录每根骨骼的初始世界变换 */
+function captureGroupStart(): void {
+  if (!groupPivot || groupBoneIds.length < 2) {
+    groupStart = null
+    return
+  }
+  const items: Array<{ bone: THREE.Bone; worldPos: THREE.Vector3; worldQuat: THREE.Quaternion }> = []
+  for (const id of groupBoneIds) {
+    const bone = boneObjects.get(id)
+    if (!bone) continue
+    items.push({
+      bone,
+      worldPos: bone.getWorldPosition(new THREE.Vector3()),
+      worldQuat: bone.getWorldQuaternion(new THREE.Quaternion())
+    })
+  }
+  groupStart = {
+    pivotPos: groupPivot.position.clone(),
+    pivotQuat: groupPivot.quaternion.clone(),
+    items
+  }
+}
+
+function boneDepth(bone: THREE.Object3D): number {
+  let depth = 0
+  let node: THREE.Object3D | null = bone
+  while (node) {
+    depth += 1
+    node = node.parent
+  }
+  return depth
+}
+
+/** 把指挥棒的位移/旋转增量套到组里每根骨骼上（位置绕质心转动） */
+function applyGroupDelta(): void {
+  if (!groupPivot || !groupStart) return
+  const deltaQuat = groupPivot.quaternion.clone().multiply(groupStart.pivotQuat.clone().invert())
+  const deltaPos = groupPivot.position.clone().sub(groupStart.pivotPos)
+  const items = [...groupStart.items].sort((a, b) => boneDepth(a.bone) - boneDepth(b.bone))
+  const tempWorldPos = new THREE.Vector3()
+  const tempParentQuat = new THREE.Quaternion()
+  const tempParentPos = new THREE.Vector3()
+  for (const item of items) {
+    // 位置：先绕质心旋转，再加上平移
+    tempWorldPos.copy(item.worldPos).sub(groupStart.pivotPos).applyQuaternion(deltaQuat).add(groupStart.pivotPos).add(deltaPos)
+    const newWorldQuat = deltaQuat.clone().multiply(item.worldQuat)
+    const bone = item.bone
+    const parent = bone.parent
+    if (!parent) {
+      bone.position.copy(tempWorldPos)
+      bone.quaternion.copy(newWorldQuat)
+      continue
+    }
+    parent.getWorldQuaternion(tempParentQuat)
+    parent.getWorldPosition(tempParentPos)
+    bone.quaternion.copy(tempParentQuat.clone().invert().multiply(newWorldQuat))
+    bone.position.copy(tempWorldPos.sub(tempParentPos).applyQuaternion(tempParentQuat.clone().invert()))
+  }
+  if (current) current.updateMatrixWorld(true)
+  emitBoneTransform()
+  if (boneOverlay) updateSkeletonOverlay()
 }
 
 function getBoneTransform(id: string): {
@@ -568,6 +680,8 @@ function clearSelection(): void {
   selectionId = ''
   lastHighlight = null
   selectedBone = null
+  groupBoneIds = []
+  groupStart = null
   clearSelectionVisual()
   if (gizmo) {
     gizmo.detach()
@@ -2127,6 +2241,9 @@ function setPartVisible(id: string, visible: boolean): void {
 
 /** 只选中并高亮，不动镜头（点列表时的默认行为，保持整体视图） */
 function selectNode(id: string): void {
+  // 单选时清掉多选组（手柄重新挂到单根骨骼上）
+  groupBoneIds = []
+  groupStart = null
   selectionId = id
   clearSelectionVisual()
   const part = partObjects.get(id)
@@ -2366,7 +2483,6 @@ function resize(): void {
 
 onMounted(() => {
   if (!host.value) return
-
   const width = host.value.clientWidth || 640
   const height = host.value.clientHeight || 420
 
@@ -2423,9 +2539,16 @@ onMounted(() => {
     if (dragging) {
       pushHistory('拖动骨骼')
       stopAnimationForEdit()
+      captureGroupStart()
+    } else {
+      groupStart = null
     }
   })
   gizmo.addEventListener('objectChange', () => {
+    if (groupBoneIds.length > 1 && groupStart) {
+      applyGroupDelta()
+      return
+    }
     emitBoneTransform()
     if (boneOverlay) updateSkeletonOverlay()
   })
@@ -2517,6 +2640,13 @@ watch(
       return
     }
     gizmo.setMode(mode)
+    if (groupBoneIds.length > 1) {
+      if (groupPivot) {
+        gizmo.attach(groupPivot)
+        helper.visible = true
+      }
+      return
+    }
     if (selectedBone) {
       gizmo.attach(selectedBone)
       helper.visible = true
@@ -2579,6 +2709,7 @@ defineExpose({
   setBonesFrozen,
   setBoxSelectMode,
   setSelectedBones,
+  setBoneGroup,
   clearFrozenBones,
   isBoneFrozen,
   importExternalActions,
