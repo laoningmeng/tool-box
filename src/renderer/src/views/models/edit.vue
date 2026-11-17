@@ -694,30 +694,46 @@ onBeforeUnmount(() => {
         </template>
         <p v-else class="edit-empty">在视口里点关节球选中骨骼，选中后这里显示属性和关键帧</p>
 
-        <template v-if="!multiSelected">
-          <div class="edit-panel__head">
-            关键帧
-            <span class="edit-panel__sub">{{ boneKeys.length }} 个</span>
-          </div>
-          <div class="edit-actions">
-            <el-button size="small" type="primary" plain :disabled="!editing" @click="recordKey">记关键帧 K</el-button>
-            <el-button size="small" :disabled="!editing" @click="recordAll">记整帧</el-button>
-            <el-button size="small" :disabled="!editing" @click="removeKey">删关键帧</el-button>
-          </div>
-          <div class="edit-key-list">
-            <button
-              v-for="time in boneKeys"
-              :key="time"
-              type="button"
-              class="edit-key"
-              :class="{ 'is-current': Math.abs(time - (editState?.time ?? 0)) < 0.5 / fps }"
-              @click="seek(time)"
-            >
-              {{ Math.round(time * fps) }} 帧
-            </button>
-            <p v-if="boneKeys.length === 0" class="edit-empty">这根骨骼还没有关键帧</p>
-          </div>
-        </template>
+        <div class="edit-panel__head">
+          关键帧
+          <span class="edit-panel__sub">
+            {{ multiSelected ? `${editState?.keyCount ?? 0} 个（整帧）` : `${boneKeys.length} 个` }}
+          </span>
+        </div>
+        <div class="edit-actions">
+          <el-button
+            size="small"
+            type="primary"
+            plain
+            :disabled="!editing || multiSelected || !selectedBone"
+            @click="recordKey"
+          >
+            记关键帧 K
+          </el-button>
+          <el-button size="small" :disabled="!editing" @click="recordAll">记整帧</el-button>
+          <el-button
+            size="small"
+            :disabled="!editing || multiSelected || !selectedBone"
+            @click="removeKey"
+          >
+            删关键帧
+          </el-button>
+        </div>
+        <div class="edit-key-list">
+          <button
+            v-for="time in boneKeys"
+            :key="time"
+            type="button"
+            class="edit-key"
+            :class="{ 'is-current': Math.abs(time - (editState?.time ?? 0)) < 0.5 / fps }"
+            @click="seek(time)"
+          >
+            {{ Math.round(time * fps) }} 帧
+          </button>
+          <p v-if="boneKeys.length === 0" class="edit-empty">
+            {{ multiSelected ? '多选状态：用「记整帧」把当前姿势整帧保存' : '这根骨骼还没有关键帧' }}
+          </p>
+        </div>
 
         <div class="edit-quick">
           <button type="button" class="edit-quick__head" @click="quickOpen = !quickOpen">
@@ -765,6 +781,14 @@ onBeforeUnmount(() => {
         <p class="edit-hint">
           共 {{ editState?.keyCount ?? 0 }} 个关键帧 · ←/→ 逐帧 · K 记帧 · 空格播放 · W/E/R 切工具
         </p>
+
+        <div class="edit-footer">
+          <div class="edit-footer__info">
+            第 {{ frame.current }} 帧 · {{ (editState?.time ?? 0).toFixed(2) }}s
+          </div>
+          <el-button size="small" :disabled="!editing" @click="recordAll">记整帧</el-button>
+          <el-button size="small" type="primary" :loading="saving" @click="save">保存并绑定</el-button>
+        </div>
       </aside>
     </div>
   </div>
@@ -924,6 +948,33 @@ onBeforeUnmount(() => {
 .edit-quick__amount :deep(.el-button) {
   align-self: flex-end;
   margin-left: 0;
+}
+
+.edit-footer {
+  position: sticky;
+  bottom: -10px;
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0 2px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  flex: none;
+}
+
+.edit-footer__info {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.edit-footer :deep(.el-button) {
+  margin-left: 0;
+  padding: 0 10px;
+  font-size: 11.5px;
 }
 
 .edit-bone-names {
