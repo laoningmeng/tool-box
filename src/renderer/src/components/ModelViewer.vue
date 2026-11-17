@@ -996,23 +996,50 @@ function recordKey(): { ok: boolean; message?: string } {
 }
 
 /** 记录整帧：所有已有轨道的骨骼都在当前时间打一帧 */
-function recordAllKeys(): { ok: boolean; count: number } {
-  if (!editSession) return { ok: false, count: 0 }
-  pushHistory('记录整帧')
+/** 把当前姿态快照写进指定时间点（所有骨骼，缺轨道就补） */
+function keyAllBonesAt(time: number): number {
+  if (!editSession) return 0
   let count = 0
-  // 记录「整帧」= 当前姿态快照：动作原本没动的骨骼（比如快捷姿态刚摆的）也要补上轨道，
-  // 否则它们只在暂停时看着对，一播放/跳帧就丢。
   for (const bone of boneObjects.values()) {
     let track = editSession.tracks.get(bone.name)
     if (!track) {
       track = { times: [], quats: [] }
       editSession.tracks.set(bone.name, track)
     }
-    setKey(track, editTime, bone.quaternion)
+    setKey(track, time, bone.quaternion)
     count += 1
   }
+  return count
+}
+
+function recordAllKeys(): { ok: boolean; count: number } {
+  if (!editSession) return { ok: false, count: 0 }
+  pushHistory('记录整帧')
+  // 记录「整帧」= 当前姿态快照：动作原本没动的骨骼（比如快捷姿态刚摆的）也要补上轨道，
+  // 否则它们只在暂停时看着对，一播放/跳帧就丢。
+  const count = keyAllBonesAt(editTime)
   editSession.dirty = true
   emitEditState()
+  return { ok: true, count }
+}
+
+/** 把当前骨骼状态原样应用到下一帧（复制一帧），常用于把姿势保持住 */
+function applyToNextFrame(): { ok: boolean; message?: string; count?: number } {
+  if (!editSession) return { ok: false, message: '当前不在精修模式' }
+  const step = 1 / editSession.fps
+  const nextTime = editTime + step
+  if (nextTime > editSession.duration + 1e-6) {
+    return { ok: false, message: '已经是最后一帧了' }
+  }
+  pushHistory('应用到下一帧')
+  const count = keyAllBonesAt(nextTime)
+  editSession.dirty = true
+  editTime = Math.min(nextTime, editSession.duration)
+  // 跳到下一帧后按新关键帧采样一次，保证画面与数据一致
+  sampleEditTracks(editTime)
+  restoreFrozenBones()
+  emitEditState()
+  emitEditTick()
   return { ok: true, count }
 }
 
@@ -2542,6 +2569,7 @@ defineExpose({
   stepEditFrame,
   recordKey,
   recordAllKeys,
+  applyToNextFrame,
   deleteKey,
   getEditResult,
   playStoredAction,

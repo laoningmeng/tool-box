@@ -320,6 +320,16 @@ function recordAll(): void {
   else ElMessage.warning('记录失败')
 }
 
+/** 把当前骨骼状态整帧复制到下一帧 */
+function applyNextFrame(): void {
+  const result = viewer.value?.applyToNextFrame()
+  if (!result?.ok) {
+    ElMessage.info(result?.message ?? '无法应用到下一帧')
+    return
+  }
+  ElMessage.success(`已把当前姿势写到第 ${frame.value.current} 帧（${result.count} 根骨骼）`)
+}
+
 function removeKey(): void {
   const result = viewer.value?.deleteKey()
   if (result?.ok) ElMessage.success('已删除当前帧关键帧')
@@ -439,7 +449,8 @@ function onKey(event: KeyboardEvent): void {
     step(-1)
   } else if (event.key === 'ArrowRight') {
     event.preventDefault()
-    step(1)
+    if (event.shiftKey) applyNextFrame()
+    else step(1)
   } else if (event.key === 'k' || event.key === 'K') {
     event.preventDefault()
     recordKey()
@@ -697,7 +708,7 @@ onBeforeUnmount(() => {
         <div class="edit-panel__head">
           关键帧
           <span class="edit-panel__sub">
-            {{ multiSelected ? `${editState?.keyCount ?? 0} 个（整帧）` : `${boneKeys.length} 个` }}
+            {{ multiSelected || !selectedBone ? `${editState?.keyCount ?? 0} 个（整帧）` : `${boneKeys.length} 个` }}
           </span>
         </div>
         <div class="edit-actions">
@@ -711,6 +722,9 @@ onBeforeUnmount(() => {
             记关键帧 K
           </el-button>
           <el-button size="small" :disabled="!editing" @click="recordAll">记整帧</el-button>
+          <el-tooltip content="把当前骨骼状态整帧复制到下一帧（Shift + →）" placement="top">
+            <el-button size="small" :disabled="!editing" @click="applyNextFrame">应用到下一帧</el-button>
+          </el-tooltip>
           <el-button
             size="small"
             :disabled="!editing || multiSelected || !selectedBone"
@@ -779,7 +793,7 @@ onBeforeUnmount(() => {
         </div>
 
         <p class="edit-hint">
-          共 {{ editState?.keyCount ?? 0 }} 个关键帧 · ←/→ 逐帧 · K 记帧 · 空格播放 · W/E/R 切工具
+          共 {{ editState?.keyCount ?? 0 }} 个关键帧 · ←/→ 逐帧 · Shift+→ 应用下一帧 · K 记帧 · 空格播放
         </p>
 
         <div class="edit-footer">
@@ -1185,13 +1199,13 @@ onBeforeUnmount(() => {
 }
 
 .edit-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 6px;
   flex: none;
 }
 
 .edit-actions :deep(.el-button) {
-  flex: 1;
   margin-left: 0;
   padding: 0 4px;
 }
