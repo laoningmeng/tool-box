@@ -15,6 +15,7 @@ import type {
   ComfyWorkflow,
   ModelAction,
   ModelActionInput,
+  ModelBonePose,
   ModelAsset,
   ModelConfigPatch,
   ModelConfigView,
@@ -104,6 +105,8 @@ const api: BridgeApi = {
     setPartNote: (modelId: string, partKey: string, note: string): Promise<Record<string, string>> =>
       ipcRenderer.invoke(IPC.model.setPartNote, modelId, partKey, note),
     pickActionFiles: (): Promise<ActionAssetFile[]> => ipcRenderer.invoke(IPC.model.pickActionFiles),
+    saveBindPose: (modelId: string, pose: ModelBonePose[] | null): Promise<ModelAsset> =>
+      ipcRenderer.invoke(IPC.model.saveBindPose, modelId, pose),
     exportGroup: (payload: {
       modelId: string
       name: string

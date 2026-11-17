@@ -259,6 +259,13 @@ export interface ModelPartGroup {
   createdAt: string
 }
 
+/** 烘焙后的绑定姿态：每根骨骼的局部变换（按骨骼名存） */
+export interface ModelBonePose {
+  name: string
+  position: [number, number, number]
+  quaternion: [number, number, number, number]
+}
+
 export interface ModelAsset {
   id: string
   name: string
@@ -277,6 +284,8 @@ export interface ModelAsset {
   actions?: ModelAction[]
   /** 部件备注（part 结构路径 -> 备注文字），仅本地辅助，不写入模型文件 */
   partNotes?: Record<string, string>
+  /** 烘焙到模型的绑定姿态；存在时所有动作都以它为基准 */
+  bindPose?: ModelBonePose[]
   createdAt: string
   updatedAt: string
   /** 查询时实时计算（文件是否还在），不落库 */
@@ -423,6 +432,8 @@ export interface ModelApi {
   setPartNote(modelId: string, partKey: string, note: string): Promise<Record<string, string>>
   /** 选择并读取外部动作文件（.fbx / .glb / .gltf） */
   pickActionFiles(): Promise<ActionAssetFile[]>
+  /** 保存/清除烘焙的绑定姿态（null = 恢复原始绑定姿态） */
+  saveBindPose(modelId: string, pose: ModelBonePose[] | null): Promise<ModelAsset>
   /**
    * 导出一组部件为 glb 文件，并自动登记进模型库。
    * 不传 targetPath 时弹保存对话框（自动化测试可直接给路径）。

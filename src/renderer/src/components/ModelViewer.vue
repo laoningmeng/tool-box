@@ -23,7 +23,13 @@ import type {
 } from './model-viewer-types'
 import { retargetClip } from '../rig/retarget'
 import type { RetargetResult, RetargetTarget } from '../rig/retarget'
-import type { ActionAssetFile, ModelAction, ModelActionInput, ModelActionTrack } from '@shared/types'
+import type {
+  ActionAssetFile,
+  ModelAction,
+  ModelActionInput,
+  ModelActionTrack,
+  ModelBonePose
+} from '@shared/types'
 
 /**
  * 3D 预览 / 实验台画布（three.js）。
@@ -54,6 +60,8 @@ const props = withDefaults(
     gizmoMode?: 'rotate' | 'translate' | 'scale' | 'off'
     /** 仅骨骼：冻结网格形变，摆骨骼时模型不动 */
     freezeMesh?: boolean
+    /** 烘焙到模型的绑定姿态（按骨骼名给的局部变换） */
+    bindPose?: ModelBonePose[] | null
   }>(),
   {
     format: 'glb',
@@ -66,7 +74,8 @@ const props = withDefaults(
     highlightColor: '#ffb74d',
     highlightIntensity: 0.45,
     gizmoMode: 'off',
-    freezeMesh: false
+    freezeMesh: false,
+    bindPose: null
   }
 )
 
@@ -1832,6 +1841,118 @@ function onCanvasPointerUp(event: PointerEvent): void {
  * 把当前骨骼世界变换定为新的绑定姿态（重建 inverse bind matrix）。
  * 配合「仅骨骼」冻结网格使用：骨骼挪动时不看网格形变，应用后从新的绑定姿态开始变形。
  */
+/* ------------------------------- 烘焙绑定姿态 ------------------------------- */
+
+/** 模型原始绑定姿态（载入 glb 时记录），用于清除烘焙 */
+const originalLocal = new Map<
+  string,
+  { position: THREE.Vector3; quaternion: THREE.Quaternion; scale: THREE.Vector3 }
+>()
+
+/** 按骨骼名把记录的局部变换写回去，并重算 inverse bind matrix + 重建语义 */
+function applyPoseData(pose: Array<{ name: string; position: [number, number, number]; quaternion: [number, number, number, number] }>): number {
+  if (!current) return 0
+  let applied = 0
+  for (const item of pose) {
+    const bone = boneByName.get(item.name)
+    if (!bone) continue
+    bone.position.set(item.position[0], item.position[1], item.position[2])
+    bone.quaternion.set(item.quaternion[0], item.quaternion[1], item.quaternion[2], item.quaternion[3])
+    applied += 1
+  }
+  if (applied === 0) return 0
+  current.updateMatrixWorld(true)
+  for (const mesh of collectSkinnedMeshes(current)) {
+    const skeleton = mesh.skeleton
+    if (!skeleton) continue
+    for (let index = 0; index < skeleton.bones.length; index += 1) {
+      const bone = skeleton.bones[index]
+      bone.updateWorldMatrix(true, false)
+      skeleton.boneInverses[index].copy(bone.matrixWorld).invert()
+    }
+    skeleton.update()
+  }
+  for (const [id, bone] of boneObjects) {
+    initialLocal.set(id, {
+      position: bone.position.clone(),
+      quaternion: bone.quaternion.clone(),
+      scale: bone.scale.clone()
+    })
+  }
+  try {
+    rigInfo = buildRig(current, collectSkinnedMeshes(current))
+    semanticRig = autoDetectSemantics(rigInfo)
+  } catch {
+    rigInfo = null
+    semanticRig = null
+  }
+  if (boneOverlay) updateSkeletonOverlay()
+  emitBoneTransform()
+  return applied
+}
+
+/** 载入模型时应用已烘焙的绑定姿态（在 parsed 之后、语义识别之前调用） */
+function applyStoredBindPose(): void {
+  const pose = props.bindPose
+  if (!pose || pose.length === 0) return
+  applyPoseData(pose)
+}
+
+/** 导出当前骨骼局部变换，供「烘焙到模型」保存 */
+function captureBindPose(): ModelBonePose[] {
+  const pose: ModelBonePose[] = []
+  for (const bone of boneObjects.values()) {
+    pose.push({
+      name: bone.name,
+      position: [bone.position.x, bone.position.y, bone.position.z],
+      quaternion: [bone.quaternion.x, bone.quaternion.y, bone.quaternion.z, bone.quaternion.w]
+    })
+  }
+  return pose
+}
+
+/** 清除烘焙：还原模型原始绑定姿态 */
+function restoreOriginalBindPose(): { ok: boolean; count: number } {
+  if (!current || originalLocal.size === 0) return { ok: false, count: 0 }
+  let count = 0
+  for (const [id, rest] of originalLocal) {
+    const bone = boneObjects.get(id)
+    if (!bone) continue
+    bone.position.copy(rest.position)
+    bone.quaternion.copy(rest.quaternion)
+    bone.scale.copy(rest.scale)
+    count += 1
+  }
+  current.updateMatrixWorld(true)
+  for (const mesh of collectSkinnedMeshes(current)) {
+    const skeleton = mesh.skeleton
+    if (!skeleton) continue
+    for (let index = 0; index < skeleton.bones.length; index += 1) {
+      const bone = skeleton.bones[index]
+      bone.updateWorldMatrix(true, false)
+      skeleton.boneInverses[index].copy(bone.matrixWorld).invert()
+    }
+    skeleton.update()
+  }
+  for (const [id, bone] of boneObjects) {
+    initialLocal.set(id, {
+      position: bone.position.clone(),
+      quaternion: bone.quaternion.clone(),
+      scale: bone.scale.clone()
+    })
+  }
+  try {
+    rigInfo = buildRig(current, collectSkinnedMeshes(current))
+    semanticRig = autoDetectSemantics(rigInfo)
+  } catch {
+    rigInfo = null
+    semanticRig = null
+  }
+  if (boneOverlay) updateSkeletonOverlay()
+  emitBoneTransform()
+  return { ok: count > 0, count }
+}
+
 function applyBindPose(): { ok: boolean; message?: string } {
   if (!current) return { ok: false, message: '模型还没加载完' }
   const meshes = collectSkinnedMeshes(current)
@@ -2203,6 +2324,16 @@ async function loadModel(bytes: Uint8Array | ArrayBuffer): Promise<void> {
       'parsed',
       buildStructure(gltf.animations, `${fmt(size.x)} × ${fmt(size.y)} × ${fmt(size.z)}`)
     )
+    // 先记下模型原始绑定姿态，清烘焙时可以还原
+    originalLocal.clear()
+    for (const [id, bone] of boneObjects) {
+      originalLocal.set(id, {
+        position: bone.position.clone(),
+        quaternion: bone.quaternion.clone(),
+        scale: bone.scale.clone()
+      })
+    }
+    applyStoredBindPose()
     analyzeSemantics(gltf.scene)
     // 必须等 buildStructure 解析完骨骼（填充 boneObjects）再建骨架叠加层
     rebuildSkeletonOverlay()
@@ -2720,6 +2851,8 @@ defineExpose({
   setQuickPoseAmount,
   endQuickPose,
   applyBindPose,
+  captureBindPose,
+  restoreOriginalBindPose,
   focusNode,
   playClip,
   pauseClip,

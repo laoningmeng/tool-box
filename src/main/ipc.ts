@@ -5,6 +5,7 @@ import type {
   AppSettings,
   AppSystemInfo,
   BackupResult,
+  ModelBonePose,
   ModelConfigPatch,
   ModelInput,
   ModelQuery,
@@ -52,6 +53,7 @@ import {
   listModels,
   pickActionFiles,
   pickImportDir,
+  saveModelBindPose,
   readModelFile,
   removeModel,
   removeModelAction,
@@ -299,6 +301,9 @@ export function registerIpc(): void {
   )
   ipcMain.handle(IPC.model.setPartNote, (_event, modelId: string, partKey: string, note: string) =>
     setModelPartNote(modelId, partKey, note)
+  )
+  ipcMain.handle(IPC.model.saveBindPose, (_event, modelId: string, pose: ModelBonePose[] | null) =>
+    saveModelBindPose(modelId, pose)
   )
   ipcMain.handle(IPC.model.pickActionFiles, (event) =>
     pickActionFiles(BrowserWindow.fromWebContents(event.sender))

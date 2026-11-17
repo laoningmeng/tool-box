@@ -48,6 +48,7 @@ export const IPC = {
     removeAction: 'model:remove-action',
     setPartNote: 'model:set-part-note',
     pickActionFiles: 'model:pick-action-files',
+    saveBindPose: 'model:save-bind-pose',
     exportGroup: 'model:export-group'
   },
   modelConfig: {

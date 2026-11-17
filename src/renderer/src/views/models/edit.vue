@@ -12,6 +12,7 @@ import {
   Delete,
   FullScreen,
   Lock,
+  MagicStick,
   Refresh,
   RefreshLeft,
   RefreshRight,
@@ -280,6 +281,57 @@ function toggleFreezeSelected(): void {
   }
 }
 
+/** 把当前姿势烘焙成模型的新绑定姿态（持久化到本地库） */
+async function bakeToModel(): Promise<void> {
+  const pose = viewer.value?.captureBindPose() ?? []
+  if (pose.length === 0) {
+    ElMessage.warning('模型还没加载完')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `把当前姿势烘焙为模型的新绑定姿态？\n之后动作库生成的动作会以这个姿态为基础，共 ${pose.length} 根骨骼。`,
+      '烘焙到模型',
+      { type: 'warning', confirmButtonText: '烘焙', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  const result = viewer.value?.applyBindPose()
+  if (!result?.ok) {
+    ElMessage.warning(result?.message ?? '烘焙失败')
+    return
+  }
+  try {
+    const updated = await window.api.model.saveBindPose(modelId.value, pose)
+    model.value = updated
+    ElMessage.success(`已烘焙 ${pose.length} 根骨骼为绑定姿态，回实验台播放动作即可看到效果`)
+  } catch (error) {
+    ElMessage.error(`保存失败：${(error as Error).message}`)
+  }
+}
+
+/** 清除烘焙，恢复模型原始绑定姿态 */
+async function clearBake(): Promise<void> {
+  try {
+    await ElMessageBox.confirm('清除烘焙，恢复模型原始绑定姿态？', '清除烘焙', {
+      type: 'warning',
+      confirmButtonText: '清除',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+  viewer.value?.restoreOriginalBindPose()
+  try {
+    const updated = await window.api.model.saveBindPose(modelId.value, null)
+    model.value = updated
+    ElMessage.success('已恢复模型原始绑定姿态')
+  } catch (error) {
+    ElMessage.error(`清除失败：${(error as Error).message}`)
+  }
+}
+
 function resetPose(): void {
   viewer.value?.endQuickPose()
   quickAction.value = ''
@@ -515,6 +567,10 @@ onBeforeUnmount(() => {
         </el-tooltip>
         <span class="edit-head__sep" />
         <el-button size="small" :icon="Refresh" @click="resetPose">重置姿态</el-button>
+        <el-tooltip content="把当前姿势存成模型的新绑定姿态：之后动作库生成的动作都以它为基础" placement="bottom">
+          <el-button size="small" :icon="MagicStick" @click="bakeToModel">烘焙到模型</el-button>
+        </el-tooltip>
+        <el-button v-if="model?.bindPose?.length" size="small" @click="clearBake">清除烘焙</el-button>
         <el-button size="small" @click="cancel">放弃</el-button>
         <el-button size="small" type="primary" :loading="saving" @click="save">保存并绑定</el-button>
       </div>
@@ -536,6 +592,7 @@ onBeforeUnmount(() => {
             :show-skeleton="display.showSkeleton"
             :gizmo-mode="gizmoMode"
             :freeze-mesh="display.freezeMesh"
+            :bind-pose="model?.bindPose ?? null"
             @parsed="handleParsed"
             @semantics="handleSemantics"
             @edit-state="handleEditState"

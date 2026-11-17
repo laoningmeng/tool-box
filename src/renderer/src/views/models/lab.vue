@@ -955,6 +955,35 @@ function focusSelected(): void {
   viewer.value?.focusNode(selectedId.value)
 }
 
+/** 清除烘焙的绑定姿态：重新加载模型让原始 glb 姿态生效 */
+async function clearBakedPose(): Promise<void> {
+  try {
+    await ElMessageBox.confirm('清除烘焙，恢复模型原始绑定姿态？', '清除烘焙', {
+      type: 'warning',
+      confirmButtonText: '清除',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+  try {
+    const updated = await window.api.model.saveBindPose(modelId.value, null)
+    model.value = updated
+    await reloadModelBytes()
+    ElMessage.success('已恢复模型原始绑定姿态')
+  } catch (error) {
+    ElMessage.error(`清除失败：${(error as Error).message}`)
+  }
+}
+
+async function reloadModelBytes(): Promise<void> {
+  try {
+    bytes.value = await store.readBytes(modelId.value)
+  } catch (error) {
+    ElMessage.error(`重新加载失败：${(error as Error).message}`)
+  }
+}
+
 function togglePartVisible(id: string): void {
   const hide = !hiddenParts.has(id)
   if (hide) hiddenParts.add(id)
@@ -1521,6 +1550,7 @@ async function reveal(): Promise<void> {
             :highlight-intensity="highlight.intensity"
             :gizmo-mode="gizmoMode"
             :freeze-mesh="display.freezeMesh"
+            :bind-pose="model?.bindPose ?? null"
             @parsed="handleParsed"
             @semantics="handleSemantics"
             @tick="handleTick"
@@ -1742,6 +1772,14 @@ async function reveal(): Promise<void> {
             <div class="info__row">
               <span>格式 / 大小</span>
               <span class="mono">{{ model?.format?.toUpperCase() }} · {{ formatBytes(model?.size ?? 0) }}</span>
+            </div>
+            <div class="info__row">
+              <span>绑定姿态</span>
+              <span v-if="model?.bindPose?.length" class="num">
+                已烘焙 {{ model.bindPose.length }} 骨骼
+                <el-button link size="small" class="info__link" @click="clearBakedPose">清除</el-button>
+              </span>
+              <span v-else class="text-muted">模型原始</span>
             </div>
             <div class="info__row">
               <span>更新时间</span>

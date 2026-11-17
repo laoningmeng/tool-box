@@ -7,6 +7,7 @@ import type {
   ModelActionInput,
   ModelActionOrigin,
   ModelActionTrack,
+  ModelBonePose,
   ModelAsset,
   ModelConfigPatch,
   ModelConfigView,
@@ -338,6 +339,44 @@ export function setModelPartNote(modelId: string, partKey: string, note: string)
   persist()
   log('info', '部件备注', `${model.name} / ${key} -> ${text || '(清除)'}`)
   return notes
+}
+
+/** 烘焙绑定姿态到模型（null = 清除，恢复模型原始绑定姿态） */
+export function saveModelBindPose(modelId: string, pose: ModelBonePose[] | null): ModelAsset {
+  const model = requireModel(modelId)
+  if (pose === null) {
+    delete model.bindPose
+    log('info', '清除绑定姿态', model.name)
+  } else {
+    const clean: ModelBonePose[] = []
+    for (const item of pose.slice(0, 500)) {
+      if (!item || typeof item.name !== 'string' || !item.name) continue
+      const position = toVec3(item.position)
+      const quaternion = toQuat(item.quaternion)
+      if (!position || !quaternion) continue
+      clean.push({ name: item.name.slice(0, 96), position, quaternion })
+    }
+    if (clean.length === 0) throw new Error('绑定姿态数据为空')
+    model.bindPose = clean
+    log('info', '烘焙绑定姿态', `${model.name} / ${clean.length} 根骨骼`)
+  }
+  model.updatedAt = now()
+  persist()
+  return model
+}
+
+function toVec3(value: unknown): [number, number, number] | null {
+  if (!Array.isArray(value) || value.length !== 3) return null
+  const out = value.map((item) => Number(item))
+  if (out.some((item) => !Number.isFinite(item))) return null
+  return [out[0], out[1], out[2]]
+}
+
+function toQuat(value: unknown): [number, number, number, number] | null {
+  if (!Array.isArray(value) || value.length !== 4) return null
+  const out = value.map((item) => Number(item))
+  if (out.some((item) => !Number.isFinite(item))) return null
+  return [out[0], out[1], out[2], out[3]]
 }
 
 export function removeModelAction(modelId: string, actionId: string): { ok: boolean } {
