@@ -1862,16 +1862,6 @@ function applyPoseData(pose: Array<{ name: string; position: [number, number, nu
   }
   if (applied === 0) return 0
   current.updateMatrixWorld(true)
-  for (const mesh of collectSkinnedMeshes(current)) {
-    const skeleton = mesh.skeleton
-    if (!skeleton) continue
-    for (let index = 0; index < skeleton.bones.length; index += 1) {
-      const bone = skeleton.bones[index]
-      bone.updateWorldMatrix(true, false)
-      skeleton.boneInverses[index].copy(bone.matrixWorld).invert()
-    }
-    skeleton.update()
-  }
   for (const [id, bone] of boneObjects) {
     initialLocal.set(id, {
       position: bone.position.clone(),
@@ -1924,16 +1914,6 @@ function restoreOriginalBindPose(): { ok: boolean; count: number } {
     count += 1
   }
   current.updateMatrixWorld(true)
-  for (const mesh of collectSkinnedMeshes(current)) {
-    const skeleton = mesh.skeleton
-    if (!skeleton) continue
-    for (let index = 0; index < skeleton.bones.length; index += 1) {
-      const bone = skeleton.bones[index]
-      bone.updateWorldMatrix(true, false)
-      skeleton.boneInverses[index].copy(bone.matrixWorld).invert()
-    }
-    skeleton.update()
-  }
   for (const [id, bone] of boneObjects) {
     initialLocal.set(id, {
       position: bone.position.clone(),
@@ -1959,17 +1939,10 @@ function applyBindPose(): { ok: boolean; message?: string } {
   if (meshes.length === 0) return { ok: false, message: '该模型没有蒙皮网格，无法设置绑定姿态' }
   pushHistory('应用为绑定姿态')
   stopAnimationForEdit()
+  // 注意：这里不能重算 inverse bind matrix。重算会把蒙皮"钉"在原始几何位置，
+  // 骨骼动而网格不动 → 出现「骨骼和角色分离」。只更新复位基准与动作语义即可，
+  // 网格会继续按原来的绑定关系跟随骨骼，变形到当前姿态。
   current.updateMatrixWorld(true)
-  for (const mesh of meshes) {
-    const skeleton = mesh.skeleton
-    if (!skeleton) continue
-    for (let index = 0; index < skeleton.bones.length; index += 1) {
-      const bone = skeleton.bones[index]
-      bone.updateWorldMatrix(true, false)
-      skeleton.boneInverses[index].copy(bone.matrixWorld).invert()
-    }
-    skeleton.update()
-  }
   // 新的绑定姿态成为「复位」基准
   for (const [id, bone] of boneObjects) {
     initialLocal.set(id, {

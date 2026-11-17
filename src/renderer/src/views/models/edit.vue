@@ -290,7 +290,7 @@ async function bakeToModel(): Promise<void> {
   }
   try {
     await ElMessageBox.confirm(
-      `把当前姿势烘焙为模型的新绑定姿态？\n之后动作库生成的动作会以这个姿态为基础，共 ${pose.length} 根骨骼。`,
+      `把当前姿势烘焙为模型的新绑定姿态？\n之后动作库生成的动作会以这个姿态为基础，共 ${pose.length} 根骨骼。\n\n提示：如果当前停在动作的某一帧，建议先点「重置姿态」再摆姿势烘焙，避免把动作帧姿势一起烘进去。`,
       '烘焙到模型',
       { type: 'warning', confirmButtonText: '烘焙', cancelButtonText: '取消' }
     )
