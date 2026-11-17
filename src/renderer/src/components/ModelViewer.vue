@@ -1456,6 +1456,8 @@ const QUICK_POSE_LABEL: Record<QuickPoseAction, string> = {
   'legs-out': '双腿外展',
   'legs-forward': '双腿前摆',
   'legs-back': '双腿后摆',
+  'foot-lift_L': '抬左脚',
+  'foot-lift_R': '抬右脚',
   'arms-in': '双臂内收',
   'arms-out': '双臂外展',
   'arms-forward': '双臂前摆',
@@ -1590,6 +1592,19 @@ function applyQuickPoseDelta(action: QuickPoseAction, step: number): number {
       return Number(rotate('thigh_L', right, -step)) + Number(rotate('thigh_R', right, -step))
     case 'legs-back':
       return Number(rotate('thigh_L', right, step)) + Number(rotate('thigh_R', right, step))
+    case 'foot-lift_L':
+      // 走路抬脚：大腿前摆 + 屈膝（小腿后收）+ 脚背略压，让脚离地
+      return (
+        Number(rotate('thigh_L', right, -step * 1.1)) +
+        Number(rotate('shin_L', right, step * 1.2)) +
+        Number(rotate('foot_L', right, -step * 0.35))
+      )
+    case 'foot-lift_R':
+      return (
+        Number(rotate('thigh_R', right, -step * 1.1)) +
+        Number(rotate('shin_R', right, step * 1.2)) +
+        Number(rotate('foot_R', right, -step * 0.35))
+      )
     case 'arms-in':
       return rotateToward(['upperArm_L', 'upperArm_R'], true)
     case 'arms-out':

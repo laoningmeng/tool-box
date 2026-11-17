@@ -69,6 +69,8 @@ export type QuickPoseAction =
   | 'legs-out'
   | 'legs-forward'
   | 'legs-back'
+  | 'foot-lift_L'
+  | 'foot-lift_R'
   | 'arms-in'
   | 'arms-out'
   | 'arms-forward'

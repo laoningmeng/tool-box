@@ -216,6 +216,8 @@ const QUICK_POSES: Array<{ action: QuickPoseAction; label: string }> = [
   { action: 'legs-out', label: '双腿外展' },
   { action: 'legs-forward', label: '双腿前摆' },
   { action: 'legs-back', label: '双腿后摆' },
+  { action: 'foot-lift_L', label: '抬左脚' },
+  { action: 'foot-lift_R', label: '抬右脚' },
   { action: 'arms-in', label: '双臂内收' },
   { action: 'arms-out', label: '双臂外展' },
   { action: 'arms-forward', label: '双臂前摆' },
