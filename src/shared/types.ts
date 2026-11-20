@@ -347,6 +347,39 @@ export interface DollCharacter {
   updatedAt: string
 }
 
+/** 部件来源：媒体库图片 / 角色拆分的 PSD 图层 */
+export type DollPartSource =
+  | { kind: 'media'; filename: string; subfolder: string; storage?: string }
+  | {
+      kind: 'psd'
+      batchId: string
+      filename: string
+      subfolder: string
+      layerIndex: number
+      layerName: string
+    }
+
+export interface PaperDollPart {
+  id: string
+  name: string
+  /** 槽位：hair/head/body/top/bottom/shoes/accessory */
+  slot: string
+  /** 叠加顺序，越大越靠上 */
+  layer: number
+  source: DollPartSource
+  /** 缩略图快照（dataURL），列表直接显示 */
+  thumb?: string
+  createdAt: string
+}
+
+export interface DollPartInput {
+  name: string
+  slot: string
+  layer: number
+  source: DollPartSource
+  thumb?: string
+}
+
 export interface DollCharacterInput {
   name: string
   images: DollCharacterImage[]
@@ -356,6 +389,10 @@ export interface DollApi {
   list(): Promise<DollCharacter[]>
   create(input: DollCharacterInput): Promise<DollCharacter>
   remove(id: string): Promise<{ ok: boolean }>
+  /** 部件库 */
+  parts(): Promise<PaperDollPart[]>
+  createPart(input: DollPartInput): Promise<PaperDollPart>
+  removePart(id: string): Promise<{ ok: boolean }>
 }
 
 export interface MediaSyncResult {

@@ -1,4 +1,11 @@
-import type { DollCharacter, DollCharacterImage, DollCharacterInput } from '../../shared/types'
+import type {
+  DollCharacter,
+  DollCharacterImage,
+  DollCharacterInput,
+  DollPartInput,
+  DollPartSource,
+  PaperDollPart
+} from '../../shared/types'
 import { getDb, now, persist } from '../store'
 import { log } from '../logger'
 
@@ -43,6 +50,65 @@ export function createDollCharacter(input: DollCharacterInput): DollCharacter {
   persist()
   log('info', '新建纸娃娃角色', `${item.name}（${images.length} 张素材）`)
   return item
+}
+
+/* ------------------------------ 部件库 ------------------------------ */
+
+const SLOT_ORDER = ['body', 'bottom', 'top', 'shoes', 'hair', 'head', 'accessory']
+
+export function listDollParts(): PaperDollPart[] {
+  return [...(getDb().dollParts ?? [])].sort((a, b) => a.layer - b.layer || (a.createdAt < b.createdAt ? 1 : -1))
+}
+
+function normalizeSource(source: DollPartSource): DollPartSource {
+  if (source?.kind === 'psd') {
+    return {
+      kind: 'psd',
+      batchId: String(source.batchId ?? '').slice(0, 200),
+      filename: String(source.filename ?? '').slice(0, 255),
+      subfolder: String(source.subfolder ?? '').slice(0, 255),
+      layerIndex: Math.max(0, Math.trunc(Number(source.layerIndex) || 0)),
+      layerName: String(source.layerName ?? '').slice(0, 120)
+    }
+  }
+  if (source?.kind === 'media' && source.filename) {
+    return {
+      kind: 'media',
+      filename: String(source.filename).slice(0, 255),
+      subfolder: String(source.subfolder ?? '').slice(0, 255),
+      storage: source.storage === 'temp' ? 'temp' : 'output'
+    }
+  }
+  throw new Error('部件来源不合法')
+}
+
+export function createDollPart(input: DollPartInput): PaperDollPart {
+  const name = String(input?.name ?? '').trim().slice(0, 40)
+  if (!name) throw new Error('部件名不能为空')
+  const slot = SLOT_ORDER.includes(String(input?.slot)) ? String(input.slot) : 'accessory'
+  const source = normalizeSource(input.source)
+  const item: PaperDollPart = {
+    id: `part_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+    name,
+    slot,
+    layer: Math.max(0, Math.min(999, Math.trunc(Number(input.layer) || 0))),
+    source,
+    thumb: typeof input.thumb === 'string' && input.thumb.startsWith('data:') ? input.thumb : undefined,
+    createdAt: now()
+  }
+  getDb().dollParts.unshift(item)
+  persist()
+  log('info', '新建纸娃娃部件', `${item.name} · ${item.slot}`)
+  return item
+}
+
+export function removeDollPart(id: string): { ok: boolean } {
+  const db = getDb()
+  const before = db.dollParts.length
+  db.dollParts = db.dollParts.filter((item) => item.id !== id)
+  if (db.dollParts.length === before) return { ok: false }
+  persist()
+  return { ok: true }
 }
 
 export function removeDollCharacter(id: string): { ok: boolean } {

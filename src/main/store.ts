@@ -7,6 +7,7 @@ import type {
   ModelAsset,
   DollCharacter,
   MediaBatch,
+  PaperDollPart,
   MediaItem,
   ModelConfigStored,
   ResourceItem
@@ -40,6 +41,8 @@ export interface Database {
   media: MediaItem[]
   /** 纸娃娃角色 */
   dollCharacters: DollCharacter[]
+  /** 纸娃娃部件库 */
+  dollParts: PaperDollPart[]
   /** 用户移除过的媒体（subfolder/filename）：同步历史时不再自动补回 */
   deletedMediaKeys: string[]
   /** 角色拆分批次（一次拆分的所有图层归一组） */
@@ -127,6 +130,7 @@ function seedDatabase(): Database {
     deletedBuiltinIds: [],
     media: [],
     dollCharacters: [],
+    dollParts: [],
     deletedMediaKeys: [],
     mediaBatches: []
   }
@@ -194,6 +198,7 @@ function mergeDefaults(raw: Partial<Database>): Database {
     deletedBuiltinIds: Array.isArray(raw.deletedBuiltinIds) ? raw.deletedBuiltinIds : [],
     media: Array.isArray(raw.media) ? (raw.media as MediaItem[]) : [],
     dollCharacters: Array.isArray(raw.dollCharacters) ? (raw.dollCharacters as DollCharacter[]) : [],
+    dollParts: Array.isArray(raw.dollParts) ? (raw.dollParts as PaperDollPart[]) : [],
     deletedMediaKeys: Array.isArray(raw.deletedMediaKeys) ? raw.deletedMediaKeys : [],
     mediaBatches: Array.isArray(raw.mediaBatches) ? (raw.mediaBatches as MediaBatch[]) : []
   }

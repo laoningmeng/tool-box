@@ -60,7 +60,14 @@ import {
   removeMediaMany,
   syncMediaFromHistory
 } from './services/media'
-import { createDollCharacter, listDollCharacters, removeDollCharacter } from './services/doll'
+import {
+  createDollCharacter,
+  createDollPart,
+  listDollCharacters,
+  listDollParts,
+  removeDollCharacter,
+  removeDollPart
+} from './services/doll'
 import {
   exportModelGroup,
   getModelConfigView,
@@ -362,6 +369,11 @@ export function registerIpc(): void {
     createDollCharacter(input)
   )
   ipcMain.handle(IPC.doll.remove, (_event, id: string) => removeDollCharacter(id))
+  ipcMain.handle(IPC.doll.parts, () => listDollParts())
+  ipcMain.handle(IPC.doll.createPart, (_event, input: Parameters<typeof createDollPart>[0]) =>
+    createDollPart(input)
+  )
+  ipcMain.handle(IPC.doll.removePart, (_event, id: string) => removeDollPart(id))
   ipcMain.handle(IPC.media.list, () => listMedia())
   ipcMain.handle(IPC.media.sync, () => syncMediaFromHistory())
   ipcMain.handle(IPC.media.remove, (_event, id: string) => removeMedia(id))
