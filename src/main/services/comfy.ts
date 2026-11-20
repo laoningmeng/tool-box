@@ -267,11 +267,48 @@ export function injectInputs(graph: Record<string, unknown>, inputs: ComfyInputs
       }
     }
   }
+  // 正向提示词：优先写进「采样器 positive 指向的文本节点」，没有则退回第一个 CLIPTextEncode。
+  // Qwen / Flux 这类流程用的是 TextEncodeQwenImage21 之类的自定义节点，字段名是 prompt 而不是 text。
+  const writePrompt = (target: Record<string, any> | undefined, text: string): boolean => {
+    if (!target) return false
+    const nodeInputs = (target.inputs ??= {})
+    if (typeof nodeInputs.text === 'string') {
+      nodeInputs.text = text
+      return true
+    }
+    if (typeof nodeInputs.prompt === 'string') {
+      nodeInputs.prompt = text
+      return true
+    }
+    return false
+  }
+  const resolveNode = (ref: unknown): Record<string, any> | undefined => {
+    if (!Array.isArray(ref) || ref.length < 1) return undefined
+    return copy[String(ref[0])] as Record<string, any> | undefined
+  }
+  let positiveConsumed = false
+  if (inputs.prompt) {
+    const positiveNode = resolveNode((sampler?.inputs as Record<string, any> | undefined)?.positive)
+    positiveConsumed = writePrompt(positiveNode, inputs.prompt)
+    if (positiveConsumed) inputs = { ...inputs, prompt: undefined }
+  }
+  // 负向提示词：采样器 negative 指向的节点里有 negative_prompt/text 就写进去
+  if (inputs.negative) {
+    const negativeNode = resolveNode((sampler?.inputs as Record<string, any> | undefined)?.negative)
+    const negativeInputs = (negativeNode?.inputs ?? {}) as Record<string, unknown>
+    if (typeof negativeInputs.negative_prompt === 'string') {
+      negativeInputs.negative_prompt = inputs.negative
+    } else if (typeof negativeInputs.text === 'string' && negativeNode !== resolveNode((sampler?.inputs as Record<string, any> | undefined)?.positive)) {
+      negativeInputs.text = inputs.negative
+    }
+  }
+
   for (const node of Object.values(copy) as Array<Record<string, any>>) {
     const nodeInputs = (node.inputs ??= {})
-    if (node.class_type === 'CLIPTextEncode' && inputs.prompt && typeof nodeInputs.text === 'string') {
+    if (!positiveConsumed && node.class_type === 'CLIPTextEncode' && inputs.prompt && typeof nodeInputs.text === 'string') {
       // 只覆盖第一个文本节点，避免把负向提示词也换掉
       nodeInputs.text = inputs.prompt
+      positiveConsumed = true
       inputs = { ...inputs, prompt: undefined }
     }
     if (/Empty.*Latent/.test(node.class_type)) {

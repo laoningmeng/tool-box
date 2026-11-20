@@ -116,12 +116,50 @@ function widgetSlots(classType: string, objectInfo: Record<string, any> | null):
   return slots
 }
 
+/** 纯界面节点：后端不执行，API 格式里带上反而会触发 required_input_missing */
+const UI_ONLY_CLASSES = new Set(['ImageCompare', 'MarkdownNote', 'XB_CanvasLabel', 'Note'])
+
+/** 补上「必填但界面没存值」的控件默认值（例如 ImageCompare.compare_view），否则 ComfyUI 报 required_input_missing */
+function fillWidgetDefaults(classType: string, inputs: Record<string, unknown>): void {
+  const def = objectInfoSafe(classType)
+  if (!def) return
+  for (const group of ['required', 'optional'] as const) {
+    const entries = def[group] as Record<string, unknown> | undefined
+    if (!entries) continue
+    for (const [name, raw] of Object.entries(entries)) {
+      if (name in inputs) continue
+      const spec = raw as unknown[]
+      const type = spec?.[0]
+      if (!isWidgetType(type)) continue
+      const opts = (spec?.[1] ?? {}) as Record<string, unknown>
+      if ('default' in opts) {
+        inputs[name] = opts.default
+      } else if (Array.isArray(type)) {
+        inputs[name] = type[0]
+      } else if (type === 'INT' || type === 'FLOAT') {
+        inputs[name] = 0
+      } else if (type === 'BOOLEAN') {
+        inputs[name] = false
+      } else if (type === 'STRING') {
+        inputs[name] = ''
+      }
+    }
+  }
+}
+
+let currentObjectInfo: Record<string, any> | null = null
+
+function objectInfoSafe(classType: string): Record<string, any> | null {
+  return currentObjectInfo?.[classType]?.input ?? null
+}
+
 /** 把界面格式流程转成 API 格式 */
 export function convertUiToApi(
   raw: Record<string, unknown>,
   objectInfo: Record<string, any> | null = null
 ): ConvertResult {
   const workflow = raw as UiWorkflow
+  currentObjectInfo = objectInfo
   const warnings: string[] = []
   const subgraphs = new Map<string, UiSubgraph>()
   for (const sg of workflow.definitions?.subgraphs ?? []) {
@@ -156,24 +194,44 @@ export function convertUiToApi(
       const subgraph = subgraphs.get(node.type)
       if (!subgraph) return
       const values = new Map<number, unknown>()
-      subgraph.inputs.forEach((input, index) => {
-        const incoming = links.find((link) => link.targetId === node.id && link.targetSlot === index)
-        if (incoming) {
-          values.set(index, resolveLink(incoming, prefix, inputValues))
-          return
+      // 关键：外层连线里的 target_slot 是「实例节点 inputs 数组」的下标，
+      // 而子图输入是按名称排列的另一套顺序（还夹着未连线的 socket），必须按名字对齐，
+      // 否则 width 会灌进 cfg、图片会灌进 height，ComfyUI 直接 400 报类型不匹配。
+      const indexByName = new Map<string, number>()
+      subgraph.inputs.forEach((input, index) => indexByName.set(input.name, index))
+      const instanceInputs = node.inputs ?? []
+      for (const link of links) {
+        if (link.targetId !== node.id) continue
+        const entry = instanceInputs[link.targetSlot]
+        const key = entry?.widget?.name ?? entry?.name
+        const index = key ? indexByName.get(key) : undefined
+        if (index === undefined) {
+          warnings.push(`子图 ${subgraph.name ?? node.type} 的连线槽 ${link.targetSlot} 找不到对应输入`)
+          continue
         }
+        values.set(index, resolveLink(link, prefix, inputValues))
+      }
+      // 其余输入用实例上的控件值（按名字），兜底按「控件型输入」的先后顺序
+      const widgetInputs = subgraph.inputs.filter((input) => isWidgetType(input.type))
+      subgraph.inputs.forEach((input, index) => {
+        if (values.has(index)) return
         const named = node.widgets_values_named?.[input.name]
         if (named !== undefined) {
           values.set(index, named)
           return
         }
-        if (Array.isArray(node.widgets_values)) values.set(index, (node.widgets_values as unknown[])[index])
+        if (!isWidgetType(input.type)) return
+        const widgetIndex = widgetInputs.indexOf(input)
+        if (widgetIndex >= 0 && Array.isArray(node.widgets_values)) {
+          values.set(index, (node.widgets_values as unknown[])[widgetIndex])
+        }
       })
       const innerOutputs = expand(subgraph.nodes, subgraph.links, `${prefix}${node.id}_`, values)
       instanceOutputs.set(`${prefix}${node.id}`, innerOutputs)
     }
 
     const convertNode = (node: UiNode): void => {
+      if (UI_ONLY_CLASSES.has(node.type)) return
       const apiId = `${prefix}${node.id}`
       const inputs: Record<string, unknown> = {}
       const named = node.widgets_values_named
@@ -209,6 +267,7 @@ export function convertUiToApi(
         inputs[name] = value
       })
 
+      fillWidgetDefaults(node.type, inputs)
       result[apiId] = { class_type: node.type, inputs }
     }
 

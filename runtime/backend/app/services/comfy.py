@@ -48,6 +48,21 @@ class ComfyClient:
                 if "application/json" in content_type:
                     return json.loads(payload.decode("utf-8")) if payload else {}
                 return payload
+        except urllib.error.HTTPError as error:
+            # ComfyUI 4xx 通常是流程图校验失败：把节点错误翻译成人话，别当成本地连不上
+            detail = ""
+            try:
+                payload = json.loads(error.read().decode("utf-8"))
+                error_info = payload.get("error") or {}
+                detail = str(error_info.get("details") or error_info.get("message") or "")
+                node_errors = payload.get("node_errors") or {}
+                for node_id, item in list(node_errors.items())[:3]:
+                    for fault in (item.get("errors") or [])[:2]:
+                        detail += f"；节点 {node_id}（{item.get('class_type', '')}）：{fault.get('details') or fault.get('message')}"
+            except Exception:  # noqa: BLE001 - 解析失败就用状态码
+                detail = ""
+            suffix = f"：{detail}" if detail else ""
+            raise ComfyError(f"ComfyUI 拒绝了流程（HTTP {error.code}）{suffix}") from error
         except urllib.error.URLError as error:
             reason = str(error.reason).rstrip("。.")
             raise ComfyError(
