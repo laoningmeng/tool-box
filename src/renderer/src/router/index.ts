@@ -56,6 +56,12 @@ const router = createRouter({
           meta: { title: '流程列表', group: '工作流管理' }
         },
         {
+          path: 'media',
+          name: 'media',
+          component: () => import('@renderer/views/media/index.vue'),
+          meta: { title: '媒体库', group: '工作流管理' }
+        },
+        {
           path: 'workflow/run',
           name: 'workflow-run',
           component: () => import('@renderer/views/workflow/run.vue'),

@@ -47,6 +47,7 @@ import {
   prepareGraphForRun
 } from './services/comfy'
 import { parseWorkflowFile, uploadWorkflow, cancelJob } from './services/workflow'
+import { listMedia, recordMediaFromJob, removeMedia, syncMediaFromHistory } from './services/media'
 import {
   exportModelGroup,
   getModelConfigView,
@@ -343,6 +344,9 @@ export function registerIpc(): void {
   })
 
   /* -------------------------------- ComfyUI -------------------------------- */
+  ipcMain.handle(IPC.media.list, () => listMedia())
+  ipcMain.handle(IPC.media.sync, () => syncMediaFromHistory())
+  ipcMain.handle(IPC.media.remove, (_event, id: string) => removeMedia(id))
   ipcMain.handle(IPC.comfy.status, () => getComfyStatus())
   ipcMain.handle(IPC.comfy.workflows, (_event, category?: WorkflowCategory) => listWorkflows(category))
   ipcMain.handle(IPC.comfy.parse, async (event, filePath?: string) =>
@@ -366,7 +370,12 @@ export function registerIpc(): void {
     })
   })
   ipcMain.handle(IPC.comfy.jobs, (_event, category?: WorkflowCategory) => listJobs(category))
-  ipcMain.handle(IPC.comfy.job, (_event, jobId: string) => getJob(jobId))
+  ipcMain.handle(IPC.comfy.job, async (_event, jobId: string) => {
+    const job = await getJob(jobId)
+    // 轮询到成功的瞬间就把产出登记进媒体库（失败不登记）
+    if (job && job.status === 'success') recordMediaFromJob(job)
+    return job
+  })
   ipcMain.handle(IPC.comfy.cancel, (_event, jobId: string) => cancelJob(jobId))
   ipcMain.handle(IPC.comfy.uploadImage, async (event) =>
     uploadImage(BrowserWindow.fromWebContents(event.sender))

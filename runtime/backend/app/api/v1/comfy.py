@@ -50,7 +50,7 @@ def _public_job(job: dict[str, Any]) -> dict[str, Any]:
 def _collect_outputs(entry: dict[str, Any]) -> list[dict[str, Any]]:
     outputs: list[dict[str, Any]] = []
     for node_output in (entry.get("outputs") or {}).values():
-        for key in ("images", "gifs", "videos"):
+        for key in ("images", "gifs", "videos", "audio"):
             for item in node_output.get(key) or []:
                 name = item.get("filename")
                 if not name:
@@ -59,7 +59,13 @@ def _collect_outputs(entry: dict[str, Any]) -> list[dict[str, Any]]:
                 outputs.append(
                     {
                         "filename": name,
-                        "type": "video" if lower.endswith((".webp", ".mp4", ".webm", ".gif")) else "image",
+                        "type": (
+                            "video"
+                            if lower.endswith((".webp", ".mp4", ".webm", ".gif", ".mov"))
+                            else "audio"
+                            if lower.endswith((".mp3", ".wav", ".flac", ".ogg", ".m4a", ".opus"))
+                            else "image"
+                        ),
                         "subfolder": item.get("subfolder") or "",
                         "bytes": 0,
                     }
@@ -189,6 +195,34 @@ def get_output(
     return Response(content=data, media_type=mime)
 
 
+
+@router.get("/history", summary="ComfyUI 历史输出（媒体库同步用）")
+def comfy_history(max_items: int = Query(200, ge=1, le=1000)) -> dict[str, Any]:
+    client = comfy_client()
+    try:
+        raw = client._request(f"/history?max_items={max_items}", timeout=30) or {}
+    except ComfyError as error:
+        raise UpstreamError(str(error)) from error
+    items: list[dict[str, Any]] = []
+    for prompt_id, entry in (raw or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        status = entry.get("status") or {}
+        if status.get("status_str") == "error":
+            continue
+        outputs = _collect_outputs(entry)
+        if not outputs:
+            continue
+        finished_at = None
+        for message in status.get("messages") or []:
+            if isinstance(message, (list, tuple)) and len(message) == 2 and message[0] == "execution_success":
+                payload = message[1] or {}
+                stamp = payload.get("timestamp")
+                if isinstance(stamp, (int, float)):
+                    finished_at = float(stamp)
+        items.append({"promptId": prompt_id, "finishedAt": finished_at, "outputs": outputs})
+    items.sort(key=lambda row: row.get("finishedAt") or 0, reverse=True)
+    return ok_list(items)
 @router.post("/upload", summary="上传参考图")
 def upload_image(payload: dict[str, Any]) -> dict[str, Any]:
     import os

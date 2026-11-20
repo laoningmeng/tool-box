@@ -243,6 +243,35 @@ export interface ComfyJob {
   elapsed: number
 }
 
+/** 媒体库条目：工作流生成结果的文件引用 */
+export type MediaKind = 'image' | 'video' | 'audio'
+
+export interface MediaItem {
+  id: string
+  filename: string
+  subfolder: string
+  type: MediaKind
+  bytes: number
+  promptId: string
+  jobId?: string
+  workflowId: string
+  workflowName: string
+  category: WorkflowCategory | ''
+  createdAt: string
+}
+
+export interface MediaSyncResult {
+  added: number
+  total: number
+  error?: string
+}
+
+export interface MediaApi {
+  list(): Promise<MediaItem[]>
+  sync(): Promise<MediaSyncResult>
+  remove(id: string): Promise<{ ok: boolean }>
+}
+
 export interface ComfyOutputData {
   dataUrl: string
   mime: string
@@ -559,4 +588,5 @@ export interface BridgeApi {
   modelConfig: ModelConfigApi
   python: PythonApi
   comfy: ComfyApi
+  media: MediaApi
 }

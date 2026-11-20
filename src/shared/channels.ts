@@ -62,6 +62,11 @@ export const IPC = {
     runtime: 'python:runtime',
     restart: 'python:restart'
   },
+  media: {
+    list: 'media:list',
+    sync: 'media:sync',
+    remove: 'media:remove'
+  },
   comfy: {
     status: 'comfy:status',
     workflows: 'comfy:workflows',

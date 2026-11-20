@@ -47,7 +47,8 @@ const navItems: NavItem[] = [
     icon: Connection,
     children: [
       { path: '/workflow', title: '流程列表' },
-      { path: '/workflow/run', title: '执行流程' }
+      { path: '/workflow/run', title: '执行流程' },
+      { path: '/media', title: '媒体库' }
     ]
   },
   { path: '/settings', title: '系统设置', icon: Setting }

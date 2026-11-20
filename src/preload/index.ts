@@ -15,6 +15,8 @@ import type {
   ComfyWorkflow,
   ModelAction,
   ModelActionInput,
+  MediaItem,
+  MediaSyncResult,
   ModelBonePose,
   ModelAsset,
   ModelConfigPatch,
@@ -148,6 +150,11 @@ const api: BridgeApi = {
     output: (filename: string, subfolder: string): Promise<ComfyOutputData> =>
       ipcRenderer.invoke(IPC.comfy.output, filename, subfolder),
     openComfy: (): Promise<void> => ipcRenderer.invoke(IPC.comfy.open)
+  },
+  media: {
+    list: (): Promise<MediaItem[]> => ipcRenderer.invoke(IPC.media.list),
+    sync: (): Promise<MediaSyncResult> => ipcRenderer.invoke(IPC.media.sync),
+    remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.media.remove, id)
   }
 }
 

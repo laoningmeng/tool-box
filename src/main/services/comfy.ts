@@ -105,6 +105,22 @@ export async function listJobs(category?: WorkflowCategory): Promise<ComfyJob[]>
   return data.items ?? []
 }
 
+export interface ComfyHistoryEntry {
+  promptId: string
+  finishedAt: number | null
+  outputs: Array<{ filename: string; subfolder: string; type: string; bytes: number }>
+}
+
+/** 拉 ComfyUI 的历史输出（媒体库同步用） */
+export async function getComfyHistory(maxItems = 200): Promise<ComfyHistoryEntry[]> {
+  await ensureBackend()
+  const data = await pythonRunner.request<ApiEnvelope<ComfyHistoryEntry[]>>({
+    path: `/api/comfy/history?max_items=${maxItems}`,
+    timeout: 60000
+  })
+  return data.items ?? []
+}
+
 export async function getJob(jobId: string): Promise<ComfyJob | null> {
   await ensureBackend()
   const data = await pythonRunner.request<ApiEnvelope<ComfyJob>>({

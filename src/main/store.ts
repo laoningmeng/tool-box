@@ -5,6 +5,7 @@ import type {
   AppSettings,
   ComfyWorkflow,
   ModelAsset,
+  MediaItem,
   ModelConfigStored,
   ResourceItem
 } from '../shared/types'
@@ -33,6 +34,8 @@ export interface Database {
   modelConfig: ModelConfigStored
   /** 用户主动删掉的内置流程 id：不再自动补回来 */
   deletedBuiltinIds: string[]
+  /** 媒体库：工作流生成结果的引用 */
+  media: MediaItem[]
 }
 
 const DB_VERSION = 2
@@ -113,7 +116,8 @@ function seedDatabase(): Database {
     // 模型库默认为空：这些文件在用户本机，不能伪造示例路径
     models: [],
     modelConfig: { ...defaultModelConfig },
-    deletedBuiltinIds: []
+    deletedBuiltinIds: [],
+    media: []
   }
 }
 
@@ -165,7 +169,8 @@ function mergeDefaults(raw: Partial<Database>): Database {
     ),
     models: Array.isArray(raw.models) ? (raw.models as ModelAsset[]) : base.models,
     modelConfig: { ...base.modelConfig, ...(raw.modelConfig ?? {}) },
-    deletedBuiltinIds: Array.isArray(raw.deletedBuiltinIds) ? raw.deletedBuiltinIds : []
+    deletedBuiltinIds: Array.isArray(raw.deletedBuiltinIds) ? raw.deletedBuiltinIds : [],
+    media: Array.isArray(raw.media) ? (raw.media as MediaItem[]) : []
   }
 }
 
