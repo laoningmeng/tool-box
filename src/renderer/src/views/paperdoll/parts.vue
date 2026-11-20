@@ -132,9 +132,10 @@ async function loadMediaPreview(item: MediaItem): Promise<void> {
 async function loadBatches(): Promise<void> {
   try {
     batches.value = await window.api.media.batches()
-    if (batches.value.length && !activeBatchId.value) {
-      await selectBatch(batches.value[0].id)
-    }
+    // 第一次/再次打开都要重新解析当前批次（openDialog 会把图层清空，不复选就一直是空的）
+    const target =
+      batches.value.find((batch) => batch.id === activeBatchId.value) ?? batches.value[0]
+    if (target) await selectBatch(target.id)
   } catch (error) {
     ElMessage.error(`读取拆分结果失败：${(error as Error).message}`)
   }
@@ -147,7 +148,10 @@ async function selectBatch(batchId: string): Promise<void> {
   psdHint.value = ''
   selectedLayerIndex.value = -1
   const batch = batches.value.find((item) => item.id === batchId)
-  if (!batch) return
+  if (!batch) {
+    psdHint.value = '没有找到这次拆分结果'
+    return
+  }
   psdLoading.value = true
   try {
     const created = new Date(batch.createdAt).getTime() / 1000
