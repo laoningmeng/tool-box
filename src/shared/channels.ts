@@ -70,7 +70,8 @@ export const IPC = {
   media: {
     list: 'media:list',
     sync: 'media:sync',
-    remove: 'media:remove'
+    remove: 'media:remove',
+    removeMany: 'media:remove-many'
   },
   comfy: {
     status: 'comfy:status',

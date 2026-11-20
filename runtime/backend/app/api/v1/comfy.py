@@ -59,6 +59,7 @@ def _collect_outputs(entry: dict[str, Any]) -> list[dict[str, Any]]:
                 outputs.append(
                     {
                         "filename": name,
+                        "storage": str(item.get("type") or "output"),
                         "type": (
                             "video"
                             if lower.endswith((".webp", ".mp4", ".webm", ".gif", ".mov"))

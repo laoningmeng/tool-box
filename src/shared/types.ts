@@ -261,6 +261,8 @@ export interface MediaItem {
   id: string
   filename: string
   subfolder: string
+  /** ComfyUI 文件类型：output 正式结果 / temp 临时预览 */
+  storage?: string
   type: MediaKind
   bytes: number
   promptId: string
@@ -307,6 +309,8 @@ export interface MediaApi {
   list(): Promise<MediaItem[]>
   sync(): Promise<MediaSyncResult>
   remove(id: string): Promise<{ ok: boolean }>
+  /** 批量删除记录 */
+  removeMany(ids: string[]): Promise<{ removed: number }>
 }
 
 export interface ComfyOutputData {
@@ -614,7 +618,7 @@ export interface ComfyApi {
   uploadImage(): Promise<{ ok: boolean; canceled?: boolean; name?: string }>
   /** 把媒体库（ComfyUI output）里的图片复制到 input，作为参考图 */
   uploadOutput(filename: string, subfolder: string): Promise<{ ok: boolean; name?: string }>
-  output(filename: string, subfolder: string): Promise<ComfyOutputData>
+  output(filename: string, subfolder: string, storage?: string): Promise<ComfyOutputData>
   openComfy(): Promise<void>
 }
 

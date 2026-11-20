@@ -39,6 +39,8 @@ export interface Database {
   media: MediaItem[]
   /** 纸娃娃角色 */
   dollCharacters: DollCharacter[]
+  /** 用户移除过的媒体（subfolder/filename）：同步历史时不再自动补回 */
+  deletedMediaKeys: string[]
 }
 
 const DB_VERSION = 2
@@ -121,7 +123,8 @@ function seedDatabase(): Database {
     modelConfig: { ...defaultModelConfig },
     deletedBuiltinIds: [],
     media: [],
-    dollCharacters: []
+    dollCharacters: [],
+    deletedMediaKeys: []
   }
 }
 
@@ -186,7 +189,8 @@ function mergeDefaults(raw: Partial<Database>): Database {
     modelConfig: { ...base.modelConfig, ...(raw.modelConfig ?? {}) },
     deletedBuiltinIds: Array.isArray(raw.deletedBuiltinIds) ? raw.deletedBuiltinIds : [],
     media: Array.isArray(raw.media) ? (raw.media as MediaItem[]) : [],
-    dollCharacters: Array.isArray(raw.dollCharacters) ? (raw.dollCharacters as DollCharacter[]) : []
+    dollCharacters: Array.isArray(raw.dollCharacters) ? (raw.dollCharacters as DollCharacter[]) : [],
+    deletedMediaKeys: Array.isArray(raw.deletedMediaKeys) ? raw.deletedMediaKeys : []
   }
 }
 

@@ -178,9 +178,13 @@ export async function uploadImage(
   return { ok: true, name: data.item.name }
 }
 
-export async function getOutput(filename: string, subfolder: string): Promise<ComfyOutputData> {
+export async function getOutput(
+  filename: string,
+  subfolder: string,
+  storage = 'output'
+): Promise<ComfyOutputData> {
   await ensureBackend()
-  const query = `?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}`
+  const query = `?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(storage)}`
   const buffer = await pythonRunner.requestBuffer(`/api/comfy/output${query}`, 120000)
   const ext = path.extname(filename).toLowerCase()
   const mime =

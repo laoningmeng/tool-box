@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Delete, Picture, Refresh, VideoCamera, Headset, RefreshRight } from '@element-plus/icons-vue'
+import { Check, Download, Delete, Picture, Refresh, VideoCamera, Headset, RefreshRight } from '@element-plus/icons-vue'
 import { WORKFLOW_CATEGORY_META } from '@shared/constants'
 import type { MediaItem, MediaKind, WorkflowCategory } from '@shared/types'
 
@@ -12,6 +12,10 @@ const syncing = ref(false)
 const activeType = ref<MediaKind | 'all'>('all')
 const previews = ref<Record<string, string>>({})
 const previewErrors = ref<Record<string, boolean>>({})
+const selectedIds = ref<string[]>([])
+const removing = ref(false)
+
+const selectedSet = computed(() => new Set(selectedIds.value))
 
 const tabs: Array<{ value: MediaKind | 'all'; label: string; icon: unknown }> = [
   { value: 'all', label: '全部', icon: Picture },
@@ -48,7 +52,7 @@ const TYPE_LABELS: Record<MediaKind, string> = { image: '图片', video: '视频
 async function loadPreview(item: MediaItem): Promise<void> {
   if (previews.value[item.id]) return
   try {
-    const data = await window.api.comfy.output(item.filename, item.subfolder)
+    const data = await window.api.comfy.output(item.filename, item.subfolder, item.storage || 'output')
     previews.value = { ...previews.value, [item.id]: data.dataUrl }
   } catch {
     previewErrors.value = { ...previewErrors.value, [item.id]: true }
@@ -74,6 +78,58 @@ async function refresh(sync = false): Promise<void> {
   }
 }
 
+function toggleSelect(item: MediaItem): void {
+  selectedIds.value = selectedSet.value.has(item.id)
+    ? selectedIds.value.filter((id) => id !== item.id)
+    : [...selectedIds.value, item.id]
+}
+
+function isSelected(item: MediaItem): boolean {
+  return selectedSet.value.has(item.id)
+}
+
+const allSelected = computed(
+  () => filtered.value.length > 0 && filtered.value.every((item) => selectedSet.value.has(item.id))
+)
+
+function toggleSelectAll(): void {
+  if (allSelected.value) {
+    const visible = new Set(filtered.value.map((item) => item.id))
+    selectedIds.value = selectedIds.value.filter((id) => !visible.has(id))
+  } else {
+    selectedIds.value = [...new Set([...selectedIds.value, ...filtered.value.map((item) => item.id)])]
+  }
+}
+
+function clearSelection(): void {
+  selectedIds.value = []
+}
+
+async function removeSelected(): Promise<void> {
+  if (selectedIds.value.length === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `删除选中的 ${selectedIds.value.length} 条记录？ComfyUI 里的原文件不会被删除。`,
+      '批量移除',
+      { type: 'warning', confirmButtonText: '移除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  removing.value = true
+  try {
+    // 传普通数组：Vue 的响应式代理不能过 IPC 的结构化克隆
+    const result = await window.api.media.removeMany([...selectedIds.value])
+    selectedIds.value = []
+    await refresh()
+    ElMessage.success(`已移除 ${result.removed} 条记录`)
+  } catch (error) {
+    ElMessage.error(`移除失败：${(error as Error).message}`)
+  } finally {
+    removing.value = false
+  }
+}
+
 async function handleRemove(item: MediaItem): Promise<void> {
   try {
     await ElMessageBox.confirm('从媒体库移除这条记录？ComfyUI 里的文件不会被删除。', '移除记录', {
@@ -86,7 +142,8 @@ async function handleRemove(item: MediaItem): Promise<void> {
   }
   const result = await window.api.media.remove(item.id)
   if (result.ok) {
-    items.value = await window.api.media.list()
+    selectedIds.value = selectedIds.value.filter((id) => id !== item.id)
+    await refresh()
     ElMessage.success('已移除记录')
   }
 }
@@ -264,14 +321,47 @@ onBeforeUnmount(() => {
             {{ tab.label }} {{ counts[tab.value] ?? 0 }}
           </button>
         </div>
-        <span class="text-muted">{{ items.length }} 个结果</span>
+        <div class="list-bar">
+          <span class="text-muted">{{ items.length }} 个结果</span>
+          <template v-if="filtered.length">
+            <el-button size="small" @click="toggleSelectAll">
+              {{ allSelected ? '取消全选' : '全选' }}
+            </el-button>
+            <el-button
+              v-if="selectedIds.length"
+              size="small"
+              type="danger"
+              plain
+              :icon="Delete"
+              :loading="removing"
+              @click="removeSelected"
+            >
+              删除所选 {{ selectedIds.length }}
+            </el-button>
+            <el-button v-if="selectedIds.length" size="small" link @click="clearSelection">清空选择</el-button>
+          </template>
+        </div>
       </header>
 
       <div class="panel__body">
         <el-empty v-if="!filtered.length" description="还没有生成结果，去「执行流程」页跑一个工作流吧" />
         <div v-else class="media-grid">
-          <article v-for="item in filtered" :key="item.id" class="media-card">
+          <article
+            v-for="item in filtered"
+            :key="item.id"
+            class="media-card"
+            :class="{ 'is-selected': isSelected(item) }"
+          >
             <div class="media-card__preview">
+              <button
+                type="button"
+                class="media-card__check"
+                :class="{ 'is-checked': isSelected(item) }"
+                :title="isSelected(item) ? '取消选择' : '选择'"
+                @click.stop="toggleSelect(item)"
+              >
+                <el-icon v-if="isSelected(item)"><Check /></el-icon>
+              </button>
               <img
                 v-if="item.type === 'image' && previews[item.id]"
                 :src="previews[item.id]"
@@ -369,6 +459,47 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.list-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.media-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.media-card__check {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1.5px solid rgba(255, 255, 255, 0.75);
+  border-radius: 50%;
+  background: rgba(11, 18, 32, 0.45);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.9;
+  transition: background var(--dur-fast) linear, border-color var(--dur-fast) linear;
+}
+
+.media-card__check:hover {
+  border-color: #fff;
+  background: rgba(11, 18, 32, 0.7);
+}
+
+.media-card__check.is-checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
 .page-actions {
   display: flex;
   gap: 8px;
