@@ -149,6 +149,8 @@ const api: BridgeApi = {
     cancel: (jobId: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.comfy.cancel, jobId),
     uploadImage: (): Promise<{ ok: boolean; canceled?: boolean; name?: string }> =>
       ipcRenderer.invoke(IPC.comfy.uploadImage),
+    uploadOutput: (filename: string, subfolder: string): Promise<{ ok: boolean; name?: string }> =>
+      ipcRenderer.invoke(IPC.comfy.uploadOutput, filename, subfolder),
     output: (filename: string, subfolder: string): Promise<ComfyOutputData> =>
       ipcRenderer.invoke(IPC.comfy.output, filename, subfolder),
     openComfy: (): Promise<void> => ipcRenderer.invoke(IPC.comfy.open)

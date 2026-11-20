@@ -140,6 +140,22 @@ export async function cancelJob(jobId: string): Promise<{ ok: boolean }> {
   return { ok: true }
 }
 
+/** 把 ComfyUI 输出（媒体库图片）复制到 input 目录，作为参考图使用 */
+export async function uploadOutputForComfy(
+  filename: string,
+  subfolder: string
+): Promise<{ ok: boolean; name?: string }> {
+  await ensureBackend()
+  const data = await pythonRunner.request<ApiEnvelope<{ name?: string }>>({
+    method: 'POST',
+    path: '/api/comfy/upload-output',
+    body: { filename, subfolder },
+    timeout: 120000
+  })
+  if (!data.item?.name) throw new Error('上传失败')
+  return { ok: true, name: data.item.name }
+}
+
 export async function uploadImage(
   win: BrowserWindow | null
 ): Promise<{ ok: boolean; canceled?: boolean; name?: string }> {

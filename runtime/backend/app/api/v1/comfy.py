@@ -223,6 +223,24 @@ def comfy_history(max_items: int = Query(200, ge=1, le=1000)) -> dict[str, Any]:
         items.append({"promptId": prompt_id, "finishedAt": finished_at, "outputs": outputs})
     items.sort(key=lambda row: row.get("finishedAt") or 0, reverse=True)
     return ok_list(items)
+
+@router.post("/upload-output", summary="把输出目录里的文件复制到 input（从媒体库选参考图）")
+def upload_output(payload: dict[str, Any]) -> dict[str, Any]:
+    filename = str(payload.get("filename") or "").strip()
+    subfolder = str(payload.get("subfolder") or "").strip()
+    if not filename:
+        raise BadRequestError("缺少文件名")
+    try:
+        data = comfy_client().view(filename, subfolder, "output")
+    except ComfyError as error:
+        raise UpstreamError(str(error)) from error
+    if not data:
+        raise UpstreamError("读取输出文件失败")
+    try:
+        name = comfy_client().upload_bytes(data, filename)
+    except ComfyError as error:
+        raise UpstreamError(str(error)) from error
+    return ok({"name": name})
 @router.post("/upload", summary="上传参考图")
 def upload_image(payload: dict[str, Any]) -> dict[str, Any]:
     import os

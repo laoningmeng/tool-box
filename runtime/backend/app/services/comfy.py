@@ -111,18 +111,17 @@ class ComfyClient:
         payload = self._request("/view", timeout=120, query=query)
         return payload if isinstance(payload, bytes) else b""
 
-    def upload_image(self, file_path: str) -> str:
-        path = Path(file_path)
-        if not path.is_file():
-            raise ComfyError(f"图片不存在：{file_path}")
+    def upload_bytes(self, data: bytes, filename: str) -> str:
+        """把内存里的图片字节上传到 ComfyUI 的 input 目录（返回服务器文件名）。"""
+        name = Path(filename).name or "image.png"
         boundary = f"----app{uuid.uuid4().hex}"
-        mime = mimetypes.guess_type(path.name)[0] or "image/png"
+        mime = mimetypes.guess_type(name)[0] or "image/png"
         body = b"".join(
             [
                 f"--{boundary}\r\n".encode(),
-                f'Content-Disposition: form-data; name="image"; filename="{path.name}"\r\n'.encode(),
+                f'Content-Disposition: form-data; name="image"; filename="{name}"\r\n'.encode(),
                 f"Content-Type: {mime}\r\n\r\n".encode(),
-                path.read_bytes(),
+                data,
                 f"\r\n--{boundary}\r\n".encode(),
                 b'Content-Disposition: form-data; name="overwrite"\r\n\r\ntrue\r\n',
                 f"--{boundary}--\r\n".encode(),
@@ -139,7 +138,13 @@ class ComfyClient:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.URLError as error:
             raise ComfyError(f"上传图片失败：{error}") from error
-        return str(payload.get("name") or path.name)
+        return str(payload.get("name") or name)
+
+    def upload_image(self, file_path: str) -> str:
+        path = Path(file_path)
+        if not path.is_file():
+            raise ComfyError(f"图片不存在：{file_path}")
+        return self.upload_bytes(path.read_bytes(), path.name)
 
 
 def comfy_client() -> ComfyClient:

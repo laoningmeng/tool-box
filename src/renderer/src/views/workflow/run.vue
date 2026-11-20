@@ -2,9 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Download, VideoPlay } from '@element-plus/icons-vue'
+import { Download, Picture, VideoPlay } from '@element-plus/icons-vue'
 import { COMFY_SAMPLE_SIZE } from '@shared/constants'
-import type { ComfyInputs, ComfyWorkflow } from '@shared/types'
+import type { ComfyInputs, ComfyWorkflow, MediaItem } from '@shared/types'
 import { useWorkflowStore } from '@renderer/stores/workflow'
 
 /** 执行流程：选择流程 → 填参数 → 运行 → 轮询进度 → 展示结果 */
@@ -27,6 +27,9 @@ const selected = computed<ComfyWorkflow | null>(
 
 /** 参考图槽位：按流程里的 LoadImage 数量动态生成 */
 const imageSlots = computed(() => selected.value?.imageInputs ?? 0)
+/** 步数/CFG 是否能注入：流程里是连线驱动时由流程内部控制，界面值不生效 */
+const stepsEditable = computed(() => selected.value?.defaults?.steps !== undefined)
+
 const sizeOptions = computed(() => {
   const list = [...COMFY_SAMPLE_SIZE]
   if (!list.includes(form.value.size)) list.unshift(form.value.size)
@@ -47,7 +50,7 @@ watch(
   },
   { immediate: true }
 )
-const referenceImages = ref<Array<{ name: string } | null>>([])
+const referenceImages = ref<Array<{ name: string; preview?: string } | null>>([])
 const uploadingSlot = ref(-1)
 const lastSeed = ref<number | null>(null)
 
@@ -73,6 +76,61 @@ async function pickReference(index: number): Promise<void> {
     ElMessage.error(`上传失败：${(error as Error).message}`)
   } finally {
     uploadingSlot.value = -1
+  }
+}
+
+/* ------------------------------ 从媒体库选参考图 ------------------------------ */
+
+const mediaDialogVisible = ref(false)
+const mediaTargetSlot = ref(-1)
+const mediaItems = ref<MediaItem[]>([])
+const mediaPreviews = ref<Record<string, string>>({})
+const mediaLoading = ref(false)
+const pickingMedia = ref(false)
+
+const imageMedia = computed(() => mediaItems.value.filter((item) => item.type === 'image'))
+
+async function loadMediaPreview(item: MediaItem): Promise<void> {
+  if (mediaPreviews.value[item.id]) return
+  try {
+    const data = await window.api.comfy.output(item.filename, item.subfolder)
+    mediaPreviews.value = { ...mediaPreviews.value, [item.id]: data.dataUrl }
+  } catch {
+    /* 预览失败忽略 */
+  }
+}
+
+async function openMediaPicker(index: number): Promise<void> {
+  mediaTargetSlot.value = index
+  mediaDialogVisible.value = true
+  mediaLoading.value = true
+  try {
+    mediaItems.value = await window.api.media.list()
+    for (const item of imageMedia.value.slice(0, 80)) void loadMediaPreview(item)
+  } catch (error) {
+    ElMessage.error(`读取媒体库失败：${(error as Error).message}`)
+  } finally {
+    mediaLoading.value = false
+  }
+}
+
+async function pickFromMedia(item: MediaItem): Promise<void> {
+  const index = mediaTargetSlot.value
+  if (index < 0 || pickingMedia.value) return
+  pickingMedia.value = true
+  try {
+    // 媒体库文件在 ComfyUI output 目录，先复制到 input 才能作为 LoadImage 使用
+    const result = await window.api.comfy.uploadOutput(item.filename, item.subfolder)
+    if (!result.name) throw new Error('复制失败')
+    const next = [...referenceImages.value]
+    next[index] = { name: result.name, preview: mediaPreviews.value[item.id] }
+    referenceImages.value = next
+    mediaDialogVisible.value = false
+    ElMessage.success(`已使用媒体库图片：${item.filename}`)
+  } catch (error) {
+    ElMessage.error(`使用失败：${(error as Error).message}`)
+  } finally {
+    pickingMedia.value = false
   }
 }
 
@@ -160,6 +218,9 @@ function download(item: { filename: string; dataUrl: string }): void {
               <template v-if="selected?.defaults?.steps">
                 · 已按流程默认值预填（{{ selected.defaults.steps }} 步 / CFG {{ selected.defaults.cfg }}）
               </template>
+              <template v-else-if="selected">
+                · 该流程的步数 / CFG 由流程图内部控制，界面里的值不会生效
+              </template>
             </p>
           </div>
         </header>
@@ -182,17 +243,24 @@ function download(item: { filename: string; dataUrl: string }): void {
               <div class="refs">
                 <div v-for="(slot, index) in referenceImages" :key="index" class="refs__slot">
                   <template v-if="slot">
-                    <span class="refs__name mono">{{ slot.name }}</span>
+                    <div class="refs__row">
+                      <img v-if="slot.preview" :src="slot.preview" class="refs__thumb" :alt="slot.name" />
+                      <span class="refs__name mono" :title="slot.name">{{ slot.name }}</span>
+                    </div>
                     <div class="refs__actions">
-                      <el-button link type="primary" size="small" @click="pickReference(index)">换一张</el-button>
+                      <el-button link type="primary" size="small" @click="pickReference(index)">本地换图</el-button>
+                      <el-button link type="primary" size="small" @click="openMediaPicker(index)">媒体库换图</el-button>
                       <el-button link type="danger" size="small" @click="clearReference(index)">移除</el-button>
                     </div>
                   </template>
                   <template v-else>
                     <span class="refs__empty">第 {{ index + 1 }} 张</span>
-                    <el-button size="small" :loading="uploadingSlot === index" @click="pickReference(index)">
-                      选择图片
-                    </el-button>
+                    <div class="refs__actions">
+                      <el-button size="small" :loading="uploadingSlot === index" @click="pickReference(index)">
+                        本地图片
+                      </el-button>
+                      <el-button size="small" :icon="Picture" @click="openMediaPicker(index)">媒体库</el-button>
+                    </div>
                   </template>
                 </div>
               </div>
@@ -210,10 +278,10 @@ function download(item: { filename: string; dataUrl: string }): void {
                 <el-input-number v-model="form.seed" :min="-1" :max="99999999" class="full" />
               </el-form-item>
               <el-form-item label="步数">
-                <el-input-number v-model="form.steps" :min="1" :max="80" class="full" />
+                <el-input-number v-model="form.steps" :min="1" :max="80" :disabled="!stepsEditable" class="full" />
               </el-form-item>
               <el-form-item label="CFG">
-                <el-input-number v-model="form.cfg" :min="1" :max="20" :step="0.5" class="full" />
+                <el-input-number v-model="form.cfg" :min="1" :max="20" :step="0.5" :disabled="!stepsEditable" class="full" />
               </el-form-item>
             </div>
           </el-form>
@@ -252,10 +320,109 @@ function download(item: { filename: string; dataUrl: string }): void {
         </div>
       </section>
     </div>
+
+    <!-- 从媒体库选参考图 -->
+    <el-dialog v-model="mediaDialogVisible" title="从媒体库选择参考图" width="720px" append-to-body>
+      <div v-loading="mediaLoading" class="media-picker">
+        <el-empty
+          v-if="!mediaLoading && !imageMedia.length"
+          description="媒体库里还没有图片，先去执行流程生成或同步 ComfyUI 历史"
+          :image-size="70"
+        />
+        <button
+          v-for="item in imageMedia"
+          :key="item.id"
+          type="button"
+          class="media-picker__item"
+          :disabled="pickingMedia"
+          :title="item.filename"
+          @click="pickFromMedia(item)"
+        >
+          <img v-if="mediaPreviews[item.id]" :src="mediaPreviews[item.id]" :alt="item.filename" />
+          <span v-else class="media-picker__empty">加载中…</span>
+          <span class="media-picker__name mono">{{ item.filename }}</span>
+        </button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
+.refs__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.refs__thumb {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  flex: none;
+  border: 1px solid var(--border-color);
+}
+
+.media-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+  max-height: 52vh;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.media-picker__item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color var(--dur-fast) linear, transform var(--dur-fast) linear;
+}
+
+.media-picker__item:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color));
+  transform: translateY(-1px);
+}
+
+.media-picker__item:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.media-picker__item img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  display: block;
+}
+
+.media-picker__empty {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1 / 1;
+  background: var(--bg-subtle);
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.media-picker__name {
+  padding: 2px 6px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
 .seed-hint {
   margin-left: 4px;
   color: var(--text-tertiary);

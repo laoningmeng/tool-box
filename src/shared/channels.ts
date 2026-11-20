@@ -83,6 +83,7 @@ export const IPC = {
     job: 'comfy:job',
     cancel: 'comfy:cancel',
     uploadImage: 'comfy:upload-image',
+    uploadOutput: 'comfy:upload-output',
     output: 'comfy:output',
     open: 'comfy:open'
   }

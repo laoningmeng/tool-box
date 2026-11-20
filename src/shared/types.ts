@@ -612,6 +612,8 @@ export interface ComfyApi {
   job(jobId: string): Promise<ComfyJob | null>
   cancel(jobId: string): Promise<{ ok: boolean }>
   uploadImage(): Promise<{ ok: boolean; canceled?: boolean; name?: string }>
+  /** 把媒体库（ComfyUI output）里的图片复制到 input，作为参考图 */
+  uploadOutput(filename: string, subfolder: string): Promise<{ ok: boolean; name?: string }>
   output(filename: string, subfolder: string): Promise<ComfyOutputData>
   openComfy(): Promise<void>
 }

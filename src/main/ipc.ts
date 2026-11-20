@@ -42,6 +42,7 @@ import {
   getJob,
   getOutput,
   uploadImage,
+  uploadOutputForComfy,
   openComfy,
   injectInputs,
   prepareGraphForRun
@@ -385,6 +386,9 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.comfy.cancel, (_event, jobId: string) => cancelJob(jobId))
   ipcMain.handle(IPC.comfy.uploadImage, async (event) =>
     uploadImage(BrowserWindow.fromWebContents(event.sender))
+  )
+  ipcMain.handle(IPC.comfy.uploadOutput, (_event, filename: string, subfolder: string) =>
+    uploadOutputForComfy(filename, subfolder)
   )
   ipcMain.handle(IPC.comfy.output, (_event, filename: string, subfolder: string) =>
     getOutput(filename, subfolder)
