@@ -20,6 +20,8 @@ import type {
   PsdLayerSheet,
   DollCharacter,
   DollCharacterInput,
+  DollOutfit,
+  DollOutfitInput,
   DollPartInput,
   PaperDollPart,
   MediaBatch,
@@ -182,6 +184,11 @@ const api: BridgeApi = {
     createPart: (input: DollPartInput): Promise<PaperDollPart> =>
       ipcRenderer.invoke(IPC.doll.createPart, input),
     removePart: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.doll.removePart, id),
+    outfits: (): Promise<DollOutfit[]> => ipcRenderer.invoke(IPC.doll.outfits),
+    saveOutfit: (input: DollOutfitInput): Promise<DollOutfit> =>
+      ipcRenderer.invoke(IPC.doll.saveOutfit, input),
+    removeOutfit: (id: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(IPC.doll.removeOutfit, id),
     create: (input: DollCharacterInput): Promise<DollCharacter> => ipcRenderer.invoke(IPC.doll.create, input),
     remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.doll.remove, id)
   }

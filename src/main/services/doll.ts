@@ -2,6 +2,8 @@ import type {
   DollCharacter,
   DollCharacterImage,
   DollCharacterInput,
+  DollOutfit,
+  DollOutfitInput,
   DollPartInput,
   DollPartSource,
   PaperDollPart
@@ -107,6 +109,47 @@ export function removeDollPart(id: string): { ok: boolean } {
   const before = db.dollParts.length
   db.dollParts = db.dollParts.filter((item) => item.id !== id)
   if (db.dollParts.length === before) return { ok: false }
+  persist()
+  return { ok: true }
+}
+
+/* ------------------------------ 换装方案 ------------------------------ */
+
+const SLOT_VALUES = ['hair', 'head', 'body', 'top', 'bottom', 'shoes', 'accessory']
+
+export function listDollOutfits(): DollOutfit[] {
+  return [...(getDb().dollOutfits ?? [])].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+}
+
+export function saveDollOutfit(input: DollOutfitInput): DollOutfit {
+  const name = String(input?.name ?? '').trim().slice(0, 40)
+  if (!name) throw new Error('方案名不能为空')
+  const characterId = String(input?.characterId ?? '').trim()
+  if (!characterId) throw new Error('先选一个角色')
+  const parts: Record<string, string> = {}
+  for (const slot of SLOT_VALUES) {
+    const partId = input?.parts?.[slot]
+    if (typeof partId === 'string' && partId) parts[slot] = partId
+  }
+  const item: DollOutfit = {
+    id: `outfit_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+    name,
+    characterId,
+    parts,
+    createdAt: now()
+  }
+  getDb().dollOutfits.unshift(item)
+  if (getDb().dollOutfits.length > 200) getDb().dollOutfits = getDb().dollOutfits.slice(0, 200)
+  persist()
+  log('info', '保存换装方案', `${name}（${Object.keys(parts).length} 个部件）`)
+  return item
+}
+
+export function removeDollOutfit(id: string): { ok: boolean } {
+  const db = getDb()
+  const before = db.dollOutfits.length
+  db.dollOutfits = db.dollOutfits.filter((item) => item.id !== id)
+  if (db.dollOutfits.length === before) return { ok: false }
   persist()
   return { ok: true }
 }

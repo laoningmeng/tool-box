@@ -64,9 +64,12 @@ import {
   createDollCharacter,
   createDollPart,
   listDollCharacters,
+  listDollOutfits,
   listDollParts,
   removeDollCharacter,
-  removeDollPart
+  removeDollOutfit,
+  removeDollPart,
+  saveDollOutfit
 } from './services/doll'
 import {
   exportModelGroup,
@@ -374,6 +377,11 @@ export function registerIpc(): void {
     createDollPart(input)
   )
   ipcMain.handle(IPC.doll.removePart, (_event, id: string) => removeDollPart(id))
+  ipcMain.handle(IPC.doll.outfits, () => listDollOutfits())
+  ipcMain.handle(IPC.doll.saveOutfit, (_event, input: Parameters<typeof saveDollOutfit>[0]) =>
+    saveDollOutfit(input)
+  )
+  ipcMain.handle(IPC.doll.removeOutfit, (_event, id: string) => removeDollOutfit(id))
   ipcMain.handle(IPC.media.list, () => listMedia())
   ipcMain.handle(IPC.media.sync, () => syncMediaFromHistory())
   ipcMain.handle(IPC.media.remove, (_event, id: string) => removeMedia(id))

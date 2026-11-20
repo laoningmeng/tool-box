@@ -372,6 +372,21 @@ export interface PaperDollPart {
   createdAt: string
 }
 
+/** 换装方案：角色 + 每个槽位选中的部件 */
+export interface DollOutfit {
+  id: string
+  name: string
+  characterId: string
+  parts: Record<string, string>
+  createdAt: string
+}
+
+export interface DollOutfitInput {
+  name: string
+  characterId: string
+  parts: Record<string, string>
+}
+
 export interface DollPartInput {
   name: string
   slot: string
@@ -393,6 +408,10 @@ export interface DollApi {
   parts(): Promise<PaperDollPart[]>
   createPart(input: DollPartInput): Promise<PaperDollPart>
   removePart(id: string): Promise<{ ok: boolean }>
+  /** 换装方案 */
+  outfits(): Promise<DollOutfit[]>
+  saveOutfit(input: DollOutfitInput): Promise<DollOutfit>
+  removeOutfit(id: string): Promise<{ ok: boolean }>
 }
 
 export interface MediaSyncResult {

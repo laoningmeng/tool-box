@@ -68,7 +68,10 @@ export const IPC = {
     remove: 'doll:remove',
     parts: 'doll:parts',
     createPart: 'doll:create-part',
-    removePart: 'doll:remove-part'
+    removePart: 'doll:remove-part',
+    outfits: 'doll:outfits',
+    saveOutfit: 'doll:save-outfit',
+    removeOutfit: 'doll:remove-outfit'
   },
   media: {
     list: 'media:list',
