@@ -118,7 +118,7 @@ function openComfy(): void {
           <span class="chip">{{ store.workflows.length }} 个流程</span>
         </h1>
         <p class="page-desc">
-          上传并解析 ComfyUI 的 API 格式流程（Workflow → Save (API Format)），入库后可到「执行流程」页运行。
+          上传并解析 ComfyUI 流程：API 格式（Save (API Format)）或界面格式（Save，含子图会自转换），入库后可到「执行流程」页运行。
         </p>
       </div>
       <div class="page-head__actions">
@@ -170,7 +170,13 @@ function openComfy(): void {
       <div class="panel__body panel__body--flush">
         <el-empty v-if="!filtered.length" description="还没有流程，点右上角「上传流程」导入一个" />
         <el-table v-else :data="filtered">
-          <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
+          <el-table-column label="名称" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span>{{ row.name }}</span>
+              <span v-if="row.builtin" class="chip chip--sm chip--builtin">内置</span>
+              <span v-if="row.imageInputs" class="chip chip--sm">{{ row.imageInputs }} 张参考图</span>
+            </template>
+          </el-table-column>
           <el-table-column label="分类" width="110">
             <template #default="{ row }">
               <span class="chip">{{ WORKFLOW_CATEGORY_META[row.category as WorkflowCategory].label }}</span>
@@ -189,11 +195,12 @@ function openComfy(): void {
               <span v-if="row.models.length > 2" class="text-muted">+{{ row.models.length - 2 }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="100">
+          <el-table-column label="状态" width="132">
             <template #default="{ row }">
               <el-tag size="small" :type="row.runnable ? 'success' : 'warning'" effect="light">
                 {{ row.runnable ? '可执行' : '仅存档' }}
               </el-tag>
+              <span class="chip chip--sm mono">{{ row.format === 'comfy-ui' ? '界面格式' : 'API' }}</span>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="150" fixed="right">
@@ -213,7 +220,7 @@ function openComfy(): void {
       <div v-if="parsed" class="parse">
         <div class="parse__head">
           <strong>{{ parsed.report.fileName }}</strong>
-          <span class="chip">{{ parsed.report.format }}</span>
+          <span class="chip">{{ parsed.report.format === 'comfy-ui' ? '界面格式（运行时自动转 API）' : parsed.report.format }}</span>
           <span class="chip">{{ parsed.report.nodeCount }} 节点</span>
           <el-tag size="small" :type="parsed.report.runnable ? 'success' : 'warning'">
             {{ parsed.report.runnable ? '可执行' : '仅存档' }}
@@ -277,6 +284,12 @@ function openComfy(): void {
 </template>
 
 <style scoped>
+.chip--builtin {
+  margin-left: 6px;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
 .page-head__actions {
   display: flex;
   gap: 8px;

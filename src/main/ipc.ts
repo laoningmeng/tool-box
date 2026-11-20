@@ -43,7 +43,8 @@ import {
   getOutput,
   uploadImage,
   openComfy,
-  injectInputs
+  injectInputs,
+  prepareGraphForRun
 } from './services/comfy'
 import { parseWorkflowFile, uploadWorkflow, cancelJob } from './services/workflow'
 import {
@@ -349,12 +350,14 @@ export function registerIpc(): void {
   )
   ipcMain.handle(IPC.comfy.upload, (_event, payload: Parameters<typeof uploadWorkflow>[0]) => uploadWorkflow(payload))
   ipcMain.handle(IPC.comfy.remove, (_event, id: string) => removeWorkflow(id))
-  ipcMain.handle(IPC.comfy.run, (_event, request: ComfyRunRequest) => {
+  ipcMain.handle(IPC.comfy.run, async (_event, request: ComfyRunRequest) => {
     const db = getDb()
     const workflow = db.workflows.find((item) => item.id === request.workflowId)
     const graph = db.workflowGraphs[request.workflowId]
     if (!workflow || !graph) throw new Error('工作流不存在或缺少流程定义')
-    const injected = injectInputs(graph, request.inputs)
+    // 界面格式（含子图）先转成 API 格式，参数注入才能认出 KSampler / LoadImage 等节点
+    const apiGraph = await prepareGraphForRun(graph)
+    const injected = injectInputs(apiGraph, request.inputs)
     return runWorkflow({
       workflowId: workflow.id,
       workflowName: workflow.name,

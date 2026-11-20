@@ -31,6 +31,8 @@ export interface Database {
   models: ModelAsset[]
   /** 3D 工具配置（API Key 可能是 enc:v1: 密文） */
   modelConfig: ModelConfigStored
+  /** 用户主动删掉的内置流程 id：不再自动补回来 */
+  deletedBuiltinIds: string[]
 }
 
 const DB_VERSION = 2
@@ -110,7 +112,8 @@ function seedDatabase(): Database {
     ),
     // 模型库默认为空：这些文件在用户本机，不能伪造示例路径
     models: [],
-    modelConfig: { ...defaultModelConfig }
+    modelConfig: { ...defaultModelConfig },
+    deletedBuiltinIds: []
   }
 }
 
@@ -120,19 +123,49 @@ export function getBuiltinGraph(id: string): Record<string, unknown> | null {
   return found ? (found.graph as Record<string, unknown>) : null
 }
 
+/** 老数据库补齐新增的内置流程（按 id 去重，不覆盖用户自己上传的） */
+function mergeBuiltinWorkflows(existing: ComfyWorkflow[], deleted: Set<string> = new Set()): ComfyWorkflow[] {
+  const list = [...existing]
+  for (const seed of seedWorkflows) {
+    if (deleted.has(seed.id)) continue
+    if (list.some((item) => item.id === seed.id)) continue
+    const { graph: _graph, ...rest } = seed
+    list.push({ ...rest, fileName: `${seed.id}.json`, createdAt: '', updatedAt: '' })
+  }
+  return list
+}
+
+function mergeBuiltinGraphs(
+  existing: Record<string, Record<string, unknown>>,
+  deleted: Set<string> = new Set()
+): Record<string, Record<string, unknown>> {
+  const graphs = { ...existing }
+  for (const seed of seedWorkflows) {
+    if (deleted.has(seed.id)) continue
+    if (!graphs[seed.id]) graphs[seed.id] = seed.graph as Record<string, unknown>
+  }
+  return graphs
+}
+
 function mergeDefaults(raw: Partial<Database>): Database {
   const base = seedDatabase()
   return {
     version: DB_VERSION,
     settings: { ...base.settings, ...(raw.settings ?? {}) },
     resources: Array.isArray(raw.resources) ? (raw.resources as ResourceItem[]) : base.resources,
-    workflows: Array.isArray(raw.workflows) ? (raw.workflows as ComfyWorkflow[]) : base.workflows,
-    workflowGraphs:
+    workflows: mergeBuiltinWorkflows(
+      Array.isArray(raw.workflows) ? (raw.workflows as ComfyWorkflow[]) : base.workflows,
+      new Set(raw.deletedBuiltinIds ?? [])
+    ),
+    workflowGraphs: mergeBuiltinGraphs(
       raw.workflowGraphs && typeof raw.workflowGraphs === 'object'
         ? (raw.workflowGraphs as Record<string, Record<string, unknown>>)
         : base.workflowGraphs,
+      new Set(raw.deletedBuiltinIds ?? [])
+    ),
     models: Array.isArray(raw.models) ? (raw.models as ModelAsset[]) : base.models,
-    modelConfig: { ...base.modelConfig, ...(raw.modelConfig ?? {}) }
+    modelConfig: { ...base.modelConfig, ...(raw.modelConfig ?? {}) },
+    deletedBuiltinIds: Array.isArray(raw.deletedBuiltinIds) ? raw.deletedBuiltinIds : []
   }
 }
 

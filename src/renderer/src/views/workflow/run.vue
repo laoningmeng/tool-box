@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Download, VideoPlay } from '@element-plus/icons-vue'
@@ -25,6 +25,42 @@ const selected = computed<ComfyWorkflow | null>(
   () => store.workflows.find((item) => item.id === selectedId.value) ?? null
 )
 
+/** 参考图槽位：按流程里的 LoadImage 数量动态生成 */
+const imageSlots = computed(() => selected.value?.imageInputs ?? 0)
+const referenceImages = ref<Array<{ name: string } | null>>([])
+const uploadingSlot = ref(-1)
+
+watch(imageSlots, (count) => {
+  const next: Array<{ name: string } | null> = []
+  for (let index = 0; index < count; index += 1) next.push(referenceImages.value[index] ?? null)
+  referenceImages.value = next
+  if (count > 0 && form.value.prompt.includes('cinematic photo')) {
+    form.value.prompt = '保持角色特征，生成统一的画面风格'
+  }
+})
+
+async function pickReference(index: number): Promise<void> {
+  uploadingSlot.value = index
+  try {
+    const result = await window.api.comfy.uploadImage()
+    if (!result.ok || !result.name) return
+    const next = [...referenceImages.value]
+    next[index] = { name: result.name }
+    referenceImages.value = next
+    ElMessage.success(`参考图已上传：${result.name}`)
+  } catch (error) {
+    ElMessage.error(`上传失败：${(error as Error).message}`)
+  } finally {
+    uploadingSlot.value = -1
+  }
+}
+
+function clearReference(index: number): void {
+  const next = [...referenceImages.value]
+  next[index] = null
+  referenceImages.value = next
+}
+
 const progress = computed(() => Math.round((store.job?.progress ?? 0) * 100))
 
 const runnableWorkflows = computed(() => store.workflows.filter((item) => item.runnable))
@@ -44,8 +80,16 @@ async function start(): Promise<void> {
     return
   }
   const [width, height] = form.value.size.split('x').map((value) => Number(value))
+  const images = referenceImages.value
+    .map((item) => item?.name)
+    .filter((name): name is string => Boolean(name))
+  if (imageSlots.value > 0 && images.length === 0) {
+    ElMessage.warning('这个流程需要参考图，请先上传')
+    return
+  }
   const inputs: ComfyInputs = {
     prompt: form.value.prompt.trim(),
+    images: images.length > 0 ? images : undefined,
     negative: form.value.negative.trim(),
     width,
     height,
@@ -103,8 +147,27 @@ function download(item: { filename: string; dataUrl: string }): void {
                 />
               </el-select>
             </el-form-item>
-            <el-form-item label="提示词">
+            <el-form-item :label="selected?.category === 't2a' ? '音效描述' : selected?.category === 'split' ? '拆分方向（可选）' : '提示词'">
               <el-input v-model="form.prompt" type="textarea" :rows="3" maxlength="500" show-word-limit />
+            </el-form-item>
+            <el-form-item v-if="imageSlots > 0" :label="`参考图（${imageSlots} 张）`">
+              <div class="refs">
+                <div v-for="(slot, index) in referenceImages" :key="index" class="refs__slot">
+                  <template v-if="slot">
+                    <span class="refs__name mono">{{ slot.name }}</span>
+                    <div class="refs__actions">
+                      <el-button link type="primary" size="small" @click="pickReference(index)">换一张</el-button>
+                      <el-button link type="danger" size="small" @click="clearReference(index)">移除</el-button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <span class="refs__empty">第 {{ index + 1 }} 张</span>
+                    <el-button size="small" :loading="uploadingSlot === index" @click="pickReference(index)">
+                      选择图片
+                    </el-button>
+                  </template>
+                </div>
+              </div>
             </el-form-item>
             <el-form-item label="负向提示词">
               <el-input v-model="form.negative" type="textarea" :rows="2" maxlength="300" />
@@ -177,6 +240,40 @@ function download(item: { filename: string; dataUrl: string }): void {
 
 .full {
   width: 100%;
+}
+
+.refs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.refs__slot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  font-size: 11.5px;
+}
+
+.refs__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.refs__empty {
+  color: var(--text-tertiary);
+}
+
+.refs__actions {
+  display: flex;
+  gap: 4px;
 }
 
 .gallery {

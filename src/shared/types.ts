@@ -152,7 +152,7 @@ export interface ResourceSummary {
 
 /* -------------------------------- 工作流模块 -------------------------------- */
 
-export type WorkflowCategory = 't2i' | 'i2i' | 'i2v'
+export type WorkflowCategory = 't2i' | 'i2i' | 'i2v' | 't2a' | 'split'
 
 export interface ComfyStatus {
   connected: boolean
@@ -174,6 +174,8 @@ export interface ComfyInputs {
   cfg?: number
   seed?: number
   image?: string
+  /** 多参考图（图生图 2/3 参考图、图生视频等，按 LoadImage 节点顺序映射） */
+  images?: string[]
   denoise?: number
   frames?: number
   fps?: number
@@ -190,6 +192,8 @@ export interface ComfyWorkflow {
   tags: string[]
   builtin: boolean
   runnable: boolean
+  /** 需要上传几张参考图（按 LoadImage 节点数统计） */
+  imageInputs?: number
   format: string
   createdAt: string
   updatedAt: string
@@ -204,7 +208,9 @@ export interface ComfyParseReport {
   category: WorkflowCategory | null
   categoryConfidence: 'high' | 'medium' | 'low' | 'none'
   inputs: Partial<Record<string, boolean>>
-  outputs: Array<{ node: string; classType: string; type: 'image' | 'video' }>
+  outputs: Array<{ node: string; classType: string; type: 'image' | 'video' | 'audio' }>
+  /** 需要几张参考图（LoadImage 节点数） */
+  imageInputs: number
   runnable: boolean
   warnings: string[]
 }

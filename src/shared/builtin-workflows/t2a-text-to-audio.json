@@ -1,0 +1,255 @@
+{
+  "id": "53a80e7b-b99d-4a75-b117-7e9a96d172d0",
+  "revision": 0,
+  "last_node_id": 45,
+  "last_link_id": 55,
+  "nodes": [
+    {
+      "id": 41,
+      "type": "WooshTextEncode",
+      "pos": [
+        -1379.8694083884927,
+        676.3742761780173
+      ],
+      "size": [
+        329.171875,
+        183.34375
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "text_conditioning",
+          "type": "WOOSH_TEXT_COND",
+          "links": [
+            52
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "WooshTextEncode",
+        "aux_id": "Saganaki22/ComfyUI-Woosh",
+        "ver": "a2523c2d689aff3b0f2e24fa293acc020a08c357"
+      },
+      "widgets_values": [
+        "T2A — text to audio (Flow/DFlow)"
+      ],
+      "widgets_values_named": {
+        "mode": "T2A — text to audio (Flow/DFlow)"
+      }
+    },
+    {
+      "id": 39,
+      "type": "WooshSample",
+      "pos": [
+        -1043.283717187664,
+        478.20998958359667
+      ],
+      "size": [
+        400,
+        334
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "gen_model",
+          "type": "WOOSH_GEN_MODEL",
+          "link": 51
+        },
+        {
+          "name": "text_conditioning",
+          "shape": 7,
+          "type": "WOOSH_TEXT_COND",
+          "link": 52
+        },
+        {
+          "name": "video",
+          "shape": 7,
+          "type": "WOOSH_VIDEO",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "video_frames",
+          "type": "IMAGE",
+          "links": []
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            55
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "WooshSample",
+        "aux_id": "Saganaki22/ComfyUI-Woosh",
+        "ver": "a2523c2d689aff3b0f2e24fa293acc020a08c357"
+      },
+      "widgets_values": [
+        "gun shot",
+        50,
+        4.5,
+        2586662964,
+        "randomize",
+        501,
+        false,
+        false
+      ],
+      "widgets_values_named": {
+        "prompt": "gun shot",
+        "steps": 50,
+        "cfg": 4.5,
+        "seed": 2586662964,
+        "control_after_generate": "randomize",
+        "latent_frames": 501,
+        "subprocess": false,
+        "force_offload": false
+      }
+    },
+    {
+      "id": 40,
+      "type": "WooshLoadFlow",
+      "pos": [
+        -1392.8147091443368,
+        471.48595470125986
+      ],
+      "size": [
+        277.296875,
+        138
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "gen_model",
+          "type": "WOOSH_GEN_MODEL",
+          "links": [
+            51
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "WooshLoadFlow",
+        "aux_id": "Saganaki22/ComfyUI-Woosh",
+        "ver": "a2523c2d689aff3b0f2e24fa293acc020a08c357"
+      },
+      "widgets_values": [
+        "Woosh-Flow",
+        "Flow"
+      ],
+      "widgets_values_named": {
+        "model_name": "Woosh-Flow",
+        "model_type": "Flow"
+      }
+    },
+    {
+      "id": 45,
+      "type": "SaveAudioAdvanced",
+      "pos": [
+        -582.5008254049216,
+        497.75838378321464
+      ],
+      "size": [
+        270,
+        178
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 55
+        }
+      ],
+      "outputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SaveAudioAdvanced"
+      },
+      "widgets_values": [
+        "audio_",
+        "mp3",
+        "V0"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "audio_",
+        "format": "mp3",
+        "format.quality": "V0"
+      }
+    }
+  ],
+  "links": [
+    [
+      51,
+      40,
+      0,
+      39,
+      0,
+      "WOOSH_GEN_MODEL"
+    ],
+    [
+      52,
+      41,
+      0,
+      39,
+      1,
+      "WOOSH_TEXT_COND"
+    ],
+    [
+      55,
+      39,
+      1,
+      45,
+      0,
+      "AUDIO"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 2,
+      "title": "Text to Audio",
+      "bounding": [
+        -1397.6642767884925,
+        401.22661258697406,
+        1066.165197266343,
+        381.34416074906324
+      ],
+      "color": "#db8000",
+      "flags": {},
+      "font_size": 24,
+      "title_align": "left"
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1.086612315353522,
+      "offset": [
+        1463.5025625477783,
+        -88.351903783215
+      ]
+    },
+    "frontendVersion": "1.52.7",
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4
+}

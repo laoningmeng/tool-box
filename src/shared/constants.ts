@@ -60,10 +60,12 @@ export const WORKFLOW_CATEGORY_META: Record<
 > = {
   t2i: { label: '文生图', caption: '文本生成图片', color: '#6366f1' },
   i2i: { label: '图生图', caption: '参考图重绘', color: '#14b8a6' },
-  i2v: { label: '图生视频', caption: '图片生成视频', color: '#f59e0b' }
+  i2v: { label: '图生视频', caption: '图片生成视频', color: '#f59e0b' },
+  t2a: { label: '文生音效', caption: '文本生成音效', color: '#8b5cf6' },
+  split: { label: '角色拆分', caption: '角色图层拆分', color: '#0ea5e9' }
 }
 
-export const WORKFLOW_CATEGORIES: WorkflowCategory[] = ['t2i', 'i2i', 'i2v']
+export const WORKFLOW_CATEGORIES: WorkflowCategory[] = ['t2i', 'i2i', 'i2v', 't2a', 'split']
 
 /** 3D 模型来源（导入时自动识别，可手动纠正） */
 export const MODEL_SOURCE_META: Record<

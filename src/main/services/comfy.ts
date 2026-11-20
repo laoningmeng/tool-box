@@ -2,6 +2,7 @@ import path from 'node:path'
 import { BrowserWindow, dialog, shell } from 'electron'
 import type { ComfyInputs, ComfyJob, ComfyOutputData, ComfyRunRequest, ComfyStatus, ComfyWorkflow, WorkflowCategory } from '../../shared/types'
 import { getComfyUrl, getDb, persist } from '../store'
+import { convertUiToApi, isUiWorkflow } from './workflow-convert'
 import { pythonRunner } from '../python'
 import { log } from '../logger'
 
@@ -167,6 +168,37 @@ export async function openComfy(): Promise<void> {
   await shell.openExternal(getComfyUrl())
 }
 
+let objectInfoCache: { at: number; data: Record<string, any> } | null = null
+
+/** 拉取 ComfyUI 的节点定义（界面格式转 API 格式时要用），缓存 5 分钟 */
+export async function getObjectInfo(): Promise<Record<string, any> | null> {
+  if (objectInfoCache && Date.now() - objectInfoCache.at < 5 * 60 * 1000) return objectInfoCache.data
+  const url = getComfyUrl().replace(/\/+$/, '')
+  try {
+    const response = await fetch(url + '/object_info', { signal: AbortSignal.timeout(8000) })
+    if (!response.ok) return null
+    const data = (await response.json()) as Record<string, any>
+    objectInfoCache = { at: Date.now(), data }
+    return data
+  } catch {
+    return null
+  }
+}
+
+/** 执行前统一图格式：界面格式（含子图）转成 ComfyUI 能吃的 API 格式 */
+export async function prepareGraphForRun(graph: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (!isUiWorkflow(graph)) return graph
+  const objectInfo = await getObjectInfo()
+  const converted = convertUiToApi(graph, objectInfo)
+  if (Object.keys(converted.graph).length === 0) {
+    throw new Error('界面格式流程转换失败：没有解析出可执行节点')
+  }
+  if (converted.warnings.length > 0) {
+    log('warn', '流程转换提示', converted.warnings.slice(0, 3).join(' | '))
+  }
+  return converted.graph as unknown as Record<string, unknown>
+}
+
 /** 供执行阶段注入参数：把界面参数写进图里（按节点类型匹配） */
 export function injectInputs(graph: Record<string, unknown>, inputs: ComfyInputs): Record<string, unknown> {
   const copy = JSON.parse(JSON.stringify(graph)) as Record<string, any>
@@ -180,6 +212,26 @@ export function injectInputs(graph: Record<string, unknown>, inputs: ComfyInputs
     if (Number.isFinite(inputs.seed)) samplerInputs.seed = inputs.seed
     if (Number.isFinite(inputs.denoise)) samplerInputs.denoise = inputs.denoise
   }
+  // 多参考图：按 LoadImage 节点顺序依次注入（图生图 2/3 参考图、图生视频、角色拆分）
+  const images = (inputs.images ?? []).filter((item) => typeof item === 'string' && item)
+  if (images.length > 0) {
+    const loadImageNodes = Object.entries(copy)
+      .filter(([, node]) => node?.class_type === 'LoadImage')
+      .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+    loadImageNodes.forEach(([, node], index) => {
+      const name = images[index] ?? images[images.length - 1]
+      if (name) (node.inputs ??= {}).image = name
+    })
+  }
+  // 音效类流程：提示词写在 WooshSample.prompt 上
+  if (inputs.prompt) {
+    for (const node of Object.values(copy) as Array<Record<string, any>>) {
+      if (/^Woosh/.test(String(node?.class_type ?? '')) && typeof node.inputs?.prompt === 'string') {
+        node.inputs.prompt = inputs.prompt
+        break
+      }
+    }
+  }
   for (const node of Object.values(copy) as Array<Record<string, any>>) {
     const nodeInputs = (node.inputs ??= {})
     if (node.class_type === 'CLIPTextEncode' && inputs.prompt && typeof nodeInputs.text === 'string') {
@@ -190,9 +242,6 @@ export function injectInputs(graph: Record<string, unknown>, inputs: ComfyInputs
     if (node.class_type === 'EmptyLatentImage') {
       if (Number.isFinite(inputs.width)) nodeInputs.width = inputs.width
       if (Number.isFinite(inputs.height)) nodeInputs.height = inputs.height
-    }
-    if (node.class_type === 'LoadImage' && inputs.image) {
-      nodeInputs.image = inputs.image
     }
   }
   return copy
