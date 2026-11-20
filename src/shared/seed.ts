@@ -83,6 +83,7 @@ export const seedWorkflows: Array<Omit<ComfyWorkflow, 'fileName' | 'createdAt' |
     runnable: true,
     format: 'comfy-ui',
     imageInputs: 0,
+    defaults: { steps: 8, cfg: 1, width: 1024, height: 1024 },
     graph: t2iZImage as unknown as Record<string, unknown>
   },
   {

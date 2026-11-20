@@ -27,6 +27,26 @@ const selected = computed<ComfyWorkflow | null>(
 
 /** 参考图槽位：按流程里的 LoadImage 数量动态生成 */
 const imageSlots = computed(() => selected.value?.imageInputs ?? 0)
+const sizeOptions = computed(() => {
+  const list = [...COMFY_SAMPLE_SIZE]
+  if (!list.includes(form.value.size)) list.unshift(form.value.size)
+  return list
+})
+
+// 切换流程时按流程自带的采样默认值预填（turbo 流程是 steps 8 / cfg 1，不能套用通用 28/7）
+watch(
+  selected,
+  (workflow) => {
+    const defaults = workflow?.defaults
+    if (!defaults) return
+    if (Number.isFinite(defaults.steps)) form.value.steps = defaults.steps as number
+    if (Number.isFinite(defaults.cfg)) form.value.cfg = defaults.cfg as number
+    if (Number.isFinite(defaults.width) && Number.isFinite(defaults.height)) {
+      form.value.size = `${defaults.width}x${defaults.height}`
+    }
+  },
+  { immediate: true }
+)
 const referenceImages = ref<Array<{ name: string } | null>>([])
 const uploadingSlot = ref(-1)
 
@@ -132,7 +152,12 @@ function download(item: { filename: string; dataUrl: string }): void {
         <header class="panel__head">
           <div>
             <h2 class="panel__title">参数</h2>
-            <p class="panel__subtitle">参数会按节点类型注入到流程图中</p>
+            <p class="panel__subtitle">
+              参数会按节点类型注入到流程图中
+              <template v-if="selected?.defaults?.steps">
+                · 已按流程默认值预填（{{ selected.defaults.steps }} 步 / CFG {{ selected.defaults.cfg }}）
+              </template>
+            </p>
           </div>
         </header>
         <div class="panel__body">
@@ -175,7 +200,7 @@ function download(item: { filename: string; dataUrl: string }): void {
             <div class="grid-2">
               <el-form-item label="尺寸">
                 <el-select v-model="form.size">
-                  <el-option v-for="item in COMFY_SAMPLE_SIZE" :key="item" :label="item" :value="item" />
+                  <el-option v-for="item in sizeOptions" :key="item" :label="item" :value="item" />
                 </el-select>
               </el-form-item>
               <el-form-item label="随机种子 (-1 随机)">

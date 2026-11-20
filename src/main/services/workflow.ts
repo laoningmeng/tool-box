@@ -65,6 +65,23 @@ function summarize(graph: Record<string, unknown>, fileName: string): ComfyParse
     }
   }
 
+  // 采样默认值：执行页用它预填（turbo 流程 steps=8 / cfg=1，别用通用默认 28/7）
+  const defaults: { steps?: number; cfg?: number; width?: number; height?: number } = {}
+  for (const node of Object.values(api)) {
+    if (defaults.steps === undefined && /^KSampler/.test(node.class_type)) {
+      const steps = node.inputs?.steps
+      const cfg = node.inputs?.cfg
+      if (typeof steps === 'number') defaults.steps = steps
+      if (typeof cfg === 'number') defaults.cfg = cfg
+    }
+    if (defaults.width === undefined && /Empty.*Latent/.test(node.class_type)) {
+      const width = node.inputs?.width
+      const height = node.inputs?.height
+      if (typeof width === 'number') defaults.width = width
+      if (typeof height === 'number') defaults.height = height
+    }
+  }
+
   const category = detectCategoryFromTypes(types)
   const nodeCount = Object.keys(api).length
   return {
@@ -86,6 +103,7 @@ function summarize(graph: Record<string, unknown>, fileName: string): ComfyParse
       image: imageInputs > 0
     },
     imageInputs,
+    defaults,
     outputs,
     runnable: nodeCount > 0,
     warnings: ui
@@ -164,6 +182,7 @@ export function uploadWorkflow(payload: {
     builtin: false,
     runnable: payload.runnable,
     imageInputs: report.imageInputs,
+    defaults: report.defaults,
     format: payload.format,
     createdAt: stamp,
     updatedAt: stamp

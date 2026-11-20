@@ -194,9 +194,18 @@ export interface ComfyWorkflow {
   runnable: boolean
   /** 需要上传几张参考图（按 LoadImage 节点数统计） */
   imageInputs?: number
+  /** 流程自带的采样参数默认值（执行页优先用它预填，避免把 turbo 流程跑成高步数/高 CFG） */
+  defaults?: WorkflowDefaults
   format: string
   createdAt: string
   updatedAt: string
+}
+
+export interface WorkflowDefaults {
+  steps?: number
+  cfg?: number
+  width?: number
+  height?: number
 }
 
 export interface ComfyParseReport {
@@ -211,6 +220,8 @@ export interface ComfyParseReport {
   outputs: Array<{ node: string; classType: string; type: 'image' | 'video' | 'audio' }>
   /** 需要几张参考图（LoadImage 节点数） */
   imageInputs: number
+  /** 从图里解析出的采样默认值 */
+  defaults?: WorkflowDefaults
   runnable: boolean
   warnings: string[]
 }

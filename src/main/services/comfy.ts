@@ -223,10 +223,13 @@ export function injectInputs(graph: Record<string, unknown>, inputs: ComfyInputs
   const sampler = findSampler() as Record<string, any> | undefined
   if (sampler) {
     const samplerInputs = (sampler.inputs ??= {})
-    if (Number.isFinite(inputs.steps)) samplerInputs.steps = inputs.steps
-    if (Number.isFinite(inputs.cfg)) samplerInputs.cfg = inputs.cfg
-    if (Number.isFinite(inputs.seed)) samplerInputs.seed = inputs.seed
-    if (Number.isFinite(inputs.denoise)) samplerInputs.denoise = inputs.denoise
+    // 只覆盖「字面量」参数：被连线驱动的输入（值是 [nodeId, slot]）交给流程自己控制，
+    // 否则会把 turbo 流程的 8 步/CFG1 冲成 28/7，直接烧出杂色。
+    const overridable = (key: string): boolean => typeof samplerInputs[key] === 'number'
+    if (Number.isFinite(inputs.steps) && overridable('steps')) samplerInputs.steps = inputs.steps
+    if (Number.isFinite(inputs.cfg) && overridable('cfg')) samplerInputs.cfg = inputs.cfg
+    if (Number.isFinite(inputs.seed) && overridable('seed')) samplerInputs.seed = inputs.seed
+    if (Number.isFinite(inputs.denoise) && overridable('denoise')) samplerInputs.denoise = inputs.denoise
   }
   // 多参考图：按 LoadImage 节点顺序依次注入（图生图 2/3 参考图、图生视频、角色拆分）
   const images = (inputs.images ?? []).filter((item) => typeof item === 'string' && item)
@@ -255,9 +258,10 @@ export function injectInputs(graph: Record<string, unknown>, inputs: ComfyInputs
       nodeInputs.text = inputs.prompt
       inputs = { ...inputs, prompt: undefined }
     }
-    if (node.class_type === 'EmptyLatentImage') {
-      if (Number.isFinite(inputs.width)) nodeInputs.width = inputs.width
-      if (Number.isFinite(inputs.height)) nodeInputs.height = inputs.height
+    if (/Empty.*Latent/.test(node.class_type)) {
+      // 支持 EmptyLatentImage / EmptySD3LatentImage 等（Z-Image 用的是 SD3 版本）
+      if (Number.isFinite(inputs.width) && typeof nodeInputs.width === 'number') nodeInputs.width = inputs.width
+      if (Number.isFinite(inputs.height) && typeof nodeInputs.height === 'number') nodeInputs.height = inputs.height
     }
   }
   return copy

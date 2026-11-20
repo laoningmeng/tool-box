@@ -129,7 +129,18 @@ export function getBuiltinGraph(id: string): Record<string, unknown> | null {
 
 /** 老数据库补齐新增的内置流程（按 id 去重，不覆盖用户自己上传的） */
 function mergeBuiltinWorkflows(existing: ComfyWorkflow[], deleted: Set<string> = new Set()): ComfyWorkflow[] {
-  const list = [...existing]
+  const seedById = new Map(seedWorkflows.map((seed) => [seed.id, seed]))
+  // 老库里已存在的内置流程：补齐后加的字段（默认采样参数、参考图数、格式）
+  const list = existing.map((item) => {
+    const seed = seedById.get(item.id)
+    if (!seed) return item
+    return {
+      ...item,
+      format: item.format || seed.format,
+      imageInputs: item.imageInputs ?? seed.imageInputs,
+      defaults: item.defaults ?? seed.defaults
+    }
+  })
   for (const seed of seedWorkflows) {
     if (deleted.has(seed.id)) continue
     if (list.some((item) => item.id === seed.id)) continue
