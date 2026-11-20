@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Delete, Picture, Refresh, VideoCamera, Headset, RefreshRight } from '@element-plus/icons-vue'
 import { WORKFLOW_CATEGORY_META } from '@shared/constants'
@@ -103,6 +103,46 @@ function download(item: MediaItem): void {
   link.click()
 }
 
+/* ------------------------------ 大图查看 ------------------------------ */
+
+const viewerVisible = ref(false)
+const viewerId = ref('')
+
+const imageItems = computed(() => filtered.value.filter((item) => item.type === 'image'))
+const viewerItem = computed(() => imageItems.value.find((item) => item.id === viewerId.value) ?? null)
+
+async function openViewer(item: MediaItem): Promise<void> {
+  if (item.type !== 'image') return
+  await loadPreview(item)
+  if (!previews.value[item.id]) {
+    ElMessage.warning('图片还在加载，稍后再试')
+    return
+  }
+  viewerId.value = item.id
+  viewerVisible.value = true
+}
+
+async function stepViewer(delta: number): Promise<void> {
+  const list = imageItems.value
+  const index = list.findIndex((item) => item.id === viewerId.value)
+  if (index < 0) return
+  const next = list[(index + delta + list.length) % list.length]
+  if (!next) return
+  await loadPreview(next)
+  viewerId.value = next.id
+}
+
+function onViewerKey(event: KeyboardEvent): void {
+  if (!viewerVisible.value) return
+  if (event.key === 'ArrowLeft') {
+    event.preventDefault()
+    void stepViewer(-1)
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault()
+    void stepViewer(1)
+  }
+}
+
 onMounted(async () => {
   // 打开页面先静默同步一次 ComfyUI 历史，历史作品也能出现在媒体库
   try {
@@ -111,6 +151,11 @@ onMounted(async () => {
     /* 同步失败不阻塞页面 */
   }
   await refresh()
+  window.addEventListener('keydown', onViewerKey)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onViewerKey)
 })
 </script>
 
@@ -157,8 +202,11 @@ onMounted(async () => {
                 v-if="item.type === 'image' && previews[item.id]"
                 :src="previews[item.id]"
                 :alt="item.filename"
+                class="media-card__image"
                 loading="lazy"
+                title="点击查看大图"
                 @load="() => loadPreview(item)"
+                @click="openViewer(item)"
               />
               <video
                 v-else-if="item.type === 'video'"
@@ -192,6 +240,31 @@ onMounted(async () => {
         </div>
       </div>
     </section>
+
+    <el-dialog
+      v-model="viewerVisible"
+      :title="viewerItem?.filename"
+      width="82%"
+      top="5vh"
+      append-to-body
+      class="media-viewer"
+    >
+      <div v-if="viewerItem && previews[viewerItem.id]" class="viewer">
+        <img :src="previews[viewerItem.id]" :alt="viewerItem.filename" />
+      </div>
+      <template #footer>
+        <div class="viewer-footer">
+          <span class="viewer-footer__hint">← → 切换 · Esc 关闭</span>
+          <div class="viewer-footer__actions">
+            <el-button :disabled="imageItems.length < 2" @click="stepViewer(-1)">上一张</el-button>
+            <el-button :disabled="imageItems.length < 2" @click="stepViewer(1)">下一张</el-button>
+            <el-button v-if="viewerItem" type="primary" :icon="Download" @click="download(viewerItem)">
+              下载
+            </el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -271,6 +344,48 @@ onMounted(async () => {
   gap: 6px;
   color: var(--text-tertiary);
   font-size: 11px;
+}
+
+.media-card__image {
+  cursor: zoom-in;
+}
+
+.media-card__image:hover {
+  transform: scale(1.02);
+  transition: transform 0.18s ease;
+}
+
+.viewer {
+  display: grid;
+  place-items: center;
+  max-height: 74vh;
+  background: #0b1220;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.viewer img {
+  max-width: 100%;
+  max-height: 74vh;
+  object-fit: contain;
+  display: block;
+}
+
+.viewer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.viewer-footer__hint {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.viewer-footer__actions {
+  display: flex;
+  gap: 8px;
 }
 
 .media-card__type {
