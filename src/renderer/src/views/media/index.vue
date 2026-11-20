@@ -118,8 +118,78 @@ async function openViewer(item: MediaItem): Promise<void> {
     ElMessage.warning('图片还在加载，稍后再试')
     return
   }
+  resetViewerTransform()
   viewerId.value = item.id
   viewerVisible.value = true
+}
+
+/* ------------------------------ 大图缩放 / 拖拽 ------------------------------ */
+
+const viewerScale = ref(1)
+const viewerOffset = ref({ x: 0, y: 0 })
+const panning = ref(false)
+const panStart = ref({ x: 0, y: 0, ox: 0, oy: 0 })
+const viewerEl = ref<HTMLElement | null>(null)
+
+const MIN_SCALE = 0.2
+const MAX_SCALE = 8
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function setScale(next: number, anchorX?: number, anchorY?: number): void {
+  const scale = clamp(next, MIN_SCALE, MAX_SCALE)
+  const ratio = scale / viewerScale.value
+  if (anchorX !== undefined && anchorY !== undefined) {
+    // 以鼠标位置为锚点缩放：偏移按比例反向补偿
+    viewerOffset.value = {
+      x: viewerOffset.value.x * ratio + anchorX * (1 - ratio),
+      y: viewerOffset.value.y * ratio + anchorY * (1 - ratio)
+    }
+  }
+  viewerScale.value = scale
+  if (scale <= 1) {
+    // 回到 1 倍以下时不再保留平移，避免图片跑出视野
+    viewerOffset.value = { x: 0, y: 0 }
+  }
+}
+
+function onViewerWheel(event: WheelEvent): void {
+  const el = viewerEl.value
+  if (!el) return
+  event.preventDefault()
+  const rect = el.getBoundingClientRect()
+  const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15
+  setScale(
+    viewerScale.value * factor,
+    event.clientX - rect.left - rect.width / 2,
+    event.clientY - rect.top - rect.height / 2
+  )
+}
+
+function onPanStart(event: MouseEvent): void {
+  if (viewerScale.value <= 1 || event.button !== 0) return
+  panning.value = true
+  panStart.value = { x: event.clientX, y: event.clientY, ox: viewerOffset.value.x, oy: viewerOffset.value.y }
+}
+
+function onPanMove(event: MouseEvent): void {
+  if (!panning.value) return
+  viewerOffset.value = {
+    x: panStart.value.ox + (event.clientX - panStart.value.x),
+    y: panStart.value.oy + (event.clientY - panStart.value.y)
+  }
+}
+
+function onPanEnd(): void {
+  panning.value = false
+}
+
+function resetViewerTransform(): void {
+  viewerScale.value = 1
+  viewerOffset.value = { x: 0, y: 0 }
+  panning.value = false
 }
 
 async function stepViewer(delta: number): Promise<void> {
@@ -129,6 +199,7 @@ async function stepViewer(delta: number): Promise<void> {
   const next = list[(index + delta + list.length) % list.length]
   if (!next) return
   await loadPreview(next)
+  resetViewerTransform()
   viewerId.value = next.id
 }
 
@@ -245,16 +316,41 @@ onBeforeUnmount(() => {
       v-model="viewerVisible"
       :title="viewerItem?.filename"
       width="82%"
-      top="5vh"
+      top="4vh"
       append-to-body
       class="media-viewer"
+      @closed="resetViewerTransform"
     >
-      <div v-if="viewerItem && previews[viewerItem.id]" class="viewer">
-        <img :src="previews[viewerItem.id]" :alt="viewerItem.filename" />
+      <div
+        v-if="viewerItem && previews[viewerItem.id]"
+        ref="viewerEl"
+        class="viewer"
+        :class="{ 'is-panning': panning }"
+        @wheel.prevent="onViewerWheel"
+        @mousedown="onPanStart"
+        @mousemove="onPanMove"
+        @mouseup="onPanEnd"
+        @mouseleave="onPanEnd"
+        @dblclick="resetViewerTransform"
+      >
+        <img
+          :src="previews[viewerItem.id]"
+          :alt="viewerItem.filename"
+          :style="{
+            transform: `translate(${viewerOffset.x}px, ${viewerOffset.y}px) scale(${viewerScale})`
+          }"
+          draggable="false"
+        />
       </div>
       <template #footer>
         <div class="viewer-footer">
-          <span class="viewer-footer__hint">← → 切换 · Esc 关闭</span>
+          <div class="viewer-footer__zoom">
+            <el-button size="small" @click="setScale(viewerScale / 1.25)">−</el-button>
+            <span class="viewer-footer__scale num">{{ Math.round(viewerScale * 100) }}%</span>
+            <el-button size="small" @click="setScale(viewerScale * 1.25)">＋</el-button>
+            <el-button size="small" @click="resetViewerTransform">适应窗口</el-button>
+            <span class="viewer-footer__hint">滚轮缩放 · 放大后拖动 · 双击复位</span>
+          </div>
           <div class="viewer-footer__actions">
             <el-button :disabled="imageItems.length < 2" @click="stepViewer(-1)">上一张</el-button>
             <el-button :disabled="imageItems.length < 2" @click="stepViewer(1)">下一张</el-button>
@@ -356,19 +452,29 @@ onBeforeUnmount(() => {
 }
 
 .viewer {
+  position: relative;
   display: grid;
   place-items: center;
-  max-height: 74vh;
+  height: 60vh;
   background: #0b1220;
   border-radius: var(--radius-md);
   overflow: hidden;
+  cursor: default;
+  user-select: none;
+}
+
+.viewer.is-panning {
+  cursor: grabbing;
 }
 
 .viewer img {
   max-width: 100%;
-  max-height: 74vh;
+  max-height: 100%;
   object-fit: contain;
   display: block;
+  transform-origin: center center;
+  will-change: transform;
+  transition: transform 0.06s linear;
 }
 
 .viewer-footer {
@@ -378,7 +484,28 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+.viewer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.viewer-footer__zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.viewer-footer__scale {
+  min-width: 48px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .viewer-footer__hint {
+  margin-left: 6px;
   font-size: 11.5px;
   color: var(--text-tertiary);
 }
