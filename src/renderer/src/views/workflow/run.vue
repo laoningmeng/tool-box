@@ -49,6 +49,7 @@ watch(
 )
 const referenceImages = ref<Array<{ name: string } | null>>([])
 const uploadingSlot = ref(-1)
+const lastSeed = ref<number | null>(null)
 
 watch(imageSlots, (count) => {
   const next: Array<{ name: string } | null> = []
@@ -100,6 +101,8 @@ async function start(): Promise<void> {
     return
   }
   const [width, height] = form.value.size.split('x').map((value) => Number(value))
+  const usedSeed = form.value.seed >= 0 ? form.value.seed : Math.floor(Math.random() * 1_000_000)
+  lastSeed.value = usedSeed
   const images = referenceImages.value
     .map((item) => item?.name)
     .filter((name): name is string => Boolean(name))
@@ -115,7 +118,7 @@ async function start(): Promise<void> {
     height,
     steps: form.value.steps,
     cfg: form.value.cfg,
-    seed: form.value.seed >= 0 ? form.value.seed : Math.floor(Math.random() * 1_000_000)
+    seed: usedSeed
   }
   try {
     await store.run(selected.value, inputs)
@@ -221,7 +224,10 @@ function download(item: { filename: string; dataUrl: string }): void {
         <header class="panel__head">
           <div>
             <h2 class="panel__title">结果</h2>
-            <p class="panel__subtitle">{{ store.job?.message || '尚未开始' }}</p>
+            <p class="panel__subtitle">
+              {{ store.job?.message || '尚未开始' }}
+              <span v-if="lastSeed !== null" class="seed-hint num">· 种子 {{ lastSeed }}</span>
+            </p>
           </div>
         </header>
         <div class="panel__body">
@@ -250,6 +256,12 @@ function download(item: { filename: string; dataUrl: string }): void {
 </template>
 
 <style scoped>
+.seed-hint {
+  margin-left: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
 .run-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
