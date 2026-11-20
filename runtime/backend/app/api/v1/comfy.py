@@ -7,11 +7,14 @@ ComfyUI 的 HTTP 轮询本身是阻塞的，这里不占用 FastAPI 的事件循
 
 from __future__ import annotations
 
+import base64
+import io
 import os
 import re
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -289,6 +292,127 @@ def _detect_output_dir() -> str | None:
             continue
     _OUTPUT_DIR_CACHE["dir"] = None
     return None
+
+
+_PSD_CACHE: dict[tuple[str, float, int], dict[str, Any]] = {}
+
+
+def _resolve_output_path(filename: str, subfolder: str) -> "Path | None":
+    """把 output 目录里的相对路径解析成绝对路径（防目录穿越）。"""
+    base = _detect_output_dir()
+    if not base or not filename:
+        return None
+    root_dir = Path(base).resolve()
+    target = (root_dir / subfolder / filename).resolve() if subfolder else (root_dir / filename).resolve()
+    try:
+        target.relative_to(root_dir)
+    except ValueError:
+        return None
+    return target if target.is_file() else None
+
+
+def _psd_module():
+    try:
+        from psd_tools import PSDImage  # noqa: PLC0415 - 依赖可选，按需导入
+    except ImportError as error:
+        raise ServiceUnavailableError("缺少 psd-tools 依赖，请运行 npm run setup:backend 或 pip install psd-tools") from error
+    return PSDImage
+
+
+def _layer_thumbnail(layer: Any, size: int) -> tuple[str | None, float]:
+    """返回（缩略图 dataURL, 非透明像素占比）。"""
+    image = layer.topil()
+    if image is None:
+        return (None, 0.0)
+    image = image.convert("RGBA")
+    alpha = image.getchannel("A")
+    # 估算覆盖率：直方图里 alpha>0 的像素比例
+    histogram = alpha.histogram()
+    total = max(1, sum(histogram))
+    opaque = total - histogram[0]
+    coverage = round(opaque / total, 5)
+    preview = image.copy()
+    preview.thumbnail((size, size))
+    buffer = io.BytesIO()
+    preview.save(buffer, format="PNG")
+    return ("data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode(), coverage)
+
+
+@router.get("/psd-layers", summary="解析 PSD 的图层清单 + 缩略图")
+def psd_layers(filename: str, subfolder: str = "", thumb: int = 160) -> dict[str, Any]:
+    path = _resolve_output_path(filename, subfolder)
+    if path is None:
+        raise NotFoundError("PSD 文件不存在")
+    PSDImage = _psd_module()
+    size = max(48, min(int(thumb or 160), 512))
+    key = (str(path), path.stat().st_mtime, size)
+    cached = _PSD_CACHE.get(key)
+    if cached:
+        return ok(cached)
+    try:
+        psd = PSDImage.open(str(path))
+    except Exception as error:  # noqa: BLE001 - 损坏文件按解析失败处理
+        raise UpstreamError(f"解析 PSD 失败：{error}") from error
+    layers: list[dict[str, Any]] = []
+    for index, layer in enumerate(psd.descendants()):
+        entry: dict[str, Any] = {
+            "index": index,
+            "name": str(layer.name or f"图层 {index + 1}"),
+            "kind": str(layer.kind),
+            "visible": bool(layer.visible),
+            "left": int(layer.left),
+            "top": int(layer.top),
+            "width": int(layer.width),
+            "height": int(layer.height),
+            "thumb": None,
+            "coverage": 0.0,
+        }
+        try:
+            thumb, coverage = _layer_thumbnail(layer, size)
+            entry["thumb"] = thumb
+            entry["coverage"] = coverage
+        except Exception:  # noqa: BLE001 - 单层渲染失败不影响其它层
+            entry["thumb"] = None
+        layers.append(entry)
+    result = {"width": int(psd.width), "height": int(psd.height), "layers": layers}
+    _PSD_CACHE[key] = result
+    if len(_PSD_CACHE) > 20:
+        for stale in list(_PSD_CACHE)[: len(_PSD_CACHE) - 20]:
+            _PSD_CACHE.pop(stale, None)
+    return ok(result)
+
+
+@router.get("/psd-layer-image", summary="PSD 单个图层的完整图片")
+def psd_layer_image(filename: str, subfolder: str = "", index: int = 0, max_size: int = 2048) -> dict[str, Any]:
+    path = _resolve_output_path(filename, subfolder)
+    if path is None:
+        raise NotFoundError("PSD 文件不存在")
+    PSDImage = _psd_module()
+    try:
+        psd = PSDImage.open(str(path))
+        layers = list(psd.descendants())
+    except Exception as error:  # noqa: BLE001
+        raise UpstreamError(f"解析 PSD 失败：{error}") from error
+    if index < 0 or index >= len(layers):
+        raise BadRequestError("图层序号超出范围")
+    layer = layers[index]
+    image = layer.topil()
+    if image is None:
+        raise UpstreamError("这个图层没有可渲染的像素")
+    image = image.convert("RGBA")
+    limit = max(256, min(int(max_size or 2048), 4096))
+    if max(image.size) > limit:
+        image.thumbnail((limit, limit))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return ok(
+        {
+            "name": str(layer.name or f"图层 {index + 1}"),
+            "width": image.width,
+            "height": image.height,
+            "dataUrl": "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode(),
+        }
+    )
 
 
 @router.get("/output-files", summary="列出 ComfyUI 输出目录里的文件（角色拆分产出的 PSD 等）")

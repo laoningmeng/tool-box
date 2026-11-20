@@ -280,6 +280,33 @@ export interface ComfyOutputFile {
   mtime: number
 }
 
+export interface PsdLayer {
+  index: number
+  name: string
+  kind: string
+  visible: boolean
+  left: number
+  top: number
+  width: number
+  height: number
+  thumb: string | null
+  /** 非透明像素占比，0 = 空图层 */
+  coverage: number
+}
+
+export interface PsdLayerSheet {
+  width: number
+  height: number
+  layers: PsdLayer[]
+}
+
+export interface PsdLayerImage {
+  name: string
+  width: number
+  height: number
+  dataUrl: string
+}
+
 export interface ComfyOutputFileList {
   dir: string
   files: ComfyOutputFile[]
@@ -655,6 +682,10 @@ export interface ComfyApi {
   uploadOutput(filename: string, subfolder: string): Promise<{ ok: boolean; name?: string }>
   /** 列出 ComfyUI 输出目录里的文件（PSD 等） */
   outputFiles(ext?: string, since?: number): Promise<ComfyOutputFileList>
+  /** 解析 PSD 图层清单 + 缩略图 */
+  psdLayers(filename: string, subfolder: string, thumb?: number): Promise<PsdLayerSheet>
+  /** 取 PSD 某个图层的完整图片 */
+  psdLayerImage(filename: string, subfolder: string, index: number): Promise<PsdLayerImage>
   output(filename: string, subfolder: string, storage?: string): Promise<ComfyOutputData>
   openComfy(): Promise<void>
 }

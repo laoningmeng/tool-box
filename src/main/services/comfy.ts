@@ -1,6 +1,16 @@
 import path from 'node:path'
 import { BrowserWindow, dialog, shell } from 'electron'
-import type { ComfyInputs, ComfyJob, ComfyOutputData, ComfyRunRequest, ComfyStatus, ComfyWorkflow, WorkflowCategory } from '../../shared/types'
+import type {
+  ComfyInputs,
+  ComfyJob,
+  ComfyOutputData,
+  ComfyRunRequest,
+  ComfyStatus,
+  ComfyWorkflow,
+  PsdLayerImage,
+  PsdLayerSheet,
+  WorkflowCategory
+} from '../../shared/types'
 import { getComfyUrl, getDb, persist } from '../store'
 import { convertUiToApi, isUiWorkflow } from './workflow-convert'
 import { pythonRunner } from '../python'
@@ -162,6 +172,40 @@ export async function uploadOutputForComfy(
   })
   if (!data.item?.name) throw new Error('上传失败')
   return { ok: true, name: data.item.name }
+}
+
+/** 解析 PSD 图层清单（角色拆分结果的分层预览） */
+export async function getPsdLayers(
+  filename: string,
+  subfolder: string,
+  thumb = 160
+): Promise<PsdLayerSheet> {
+  await ensureBackend()
+  const params = new URLSearchParams({ filename, subfolder, thumb: String(thumb) })
+  const data = await pythonRunner.request<ApiEnvelope<PsdLayerSheet>>({
+    method: 'GET',
+    path: `/api/comfy/psd-layers?${params.toString()}`,
+    timeout: 120000
+  })
+  if (!data.item) throw new Error('解析 PSD 失败')
+  return data.item
+}
+
+/** 取 PSD 某层的完整图片 */
+export async function getPsdLayerImage(
+  filename: string,
+  subfolder: string,
+  index: number
+): Promise<PsdLayerImage> {
+  await ensureBackend()
+  const params = new URLSearchParams({ filename, subfolder, index: String(index) })
+  const data = await pythonRunner.request<ApiEnvelope<PsdLayerImage>>({
+    method: 'GET',
+    path: `/api/comfy/psd-layer-image?${params.toString()}`,
+    timeout: 120000
+  })
+  if (!data.item) throw new Error('读取图层失败')
+  return data.item
 }
 
 /** 列出 ComfyUI 输出目录里的文件（角色拆分产出的 PSD） */

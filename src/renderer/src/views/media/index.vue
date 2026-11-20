@@ -13,7 +13,14 @@ import {
   VideoCamera
 } from '@element-plus/icons-vue'
 import { WORKFLOW_CATEGORY_META } from '@shared/constants'
-import type { ComfyOutputFile, MediaBatch, MediaItem, MediaKind, WorkflowCategory } from '@shared/types'
+import type {
+  ComfyOutputFile,
+  MediaBatch,
+  MediaItem,
+  MediaKind,
+  PsdLayer,
+  WorkflowCategory
+} from '@shared/types'
 
 /** 媒体库：工作流生成的图片 / 视频 / 音频都会汇总到这里 */
 const items = ref<MediaItem[]>([])
@@ -44,6 +51,41 @@ const batchDialogItem = ref<MediaBatch | null>(null)
 const psdFiles = ref<ComfyOutputFile[]>([])
 const psdDir = ref('')
 const psdHint = ref('')
+const psdLoading = ref(false)
+const psdError = ref('')
+const psdLayers = ref<PsdLayer[]>([])
+const hideEmptyLayers = ref(true)
+
+const visiblePsdLayers = computed(() =>
+  hideEmptyLayers.value ? psdLayers.value.filter((layer) => layer.coverage > 0.002) : psdLayers.value
+)
+const emptyLayerCount = computed(() => psdLayers.value.filter((layer) => layer.coverage <= 0.002).length)
+const psdSource = ref<{ filename: string; subfolder: string } | null>(null)
+const layerPreviewVisible = ref(false)
+const layerPreviewLoading = ref(false)
+const layerPreviewName = ref('')
+const layerPreviewDataUrl = ref('')
+const layerPreviewSize = ref({ width: 0, height: 0 })
+
+const layerPreviewStyle = computed(() => {
+  const { width, height } = layerPreviewSize.value
+  if (!width || !height) return {}
+  // 小图层（眼睛、鼻嘴等）先放大到至少 320px，再整体收进对话框
+  const minW = 320
+  const maxW = 620
+  const maxH = 460
+  let scale = Math.max(width, height) < minW ? Math.max(1, Math.round(minW / Math.max(width, height))) : 1
+  let displayW = width * scale
+  let displayH = height * scale
+  const fit = Math.min(1, maxW / displayW, maxH / displayH)
+  displayW = Math.round(displayW * fit)
+  displayH = Math.round(displayH * fit)
+  return {
+    width: `${displayW}px`,
+    height: `${displayH}px`,
+    imageRendering: (scale > 1 ? 'pixelated' : 'auto') as 'pixelated' | 'auto'
+  }
+})
 
 const counts = computed(() => {
   const map: Record<string, number> = { all: items.value.length, image: 0, video: 0, audio: 0, batch: batches.value.length }
@@ -198,6 +240,10 @@ async function openBatch(batch: MediaBatch): Promise<void> {
   batchDialogVisible.value = true
   psdFiles.value = []
   psdHint.value = ''
+  psdLayers.value = []
+  psdError.value = ''
+  psdSource.value = null
+  psdLoading.value = false
   void loadPsdFiles(batch)
 }
 
@@ -210,10 +256,56 @@ async function loadPsdFiles(batch: MediaBatch): Promise<void> {
     psdFiles.value = result.files.filter((item) => item.mtime >= created - 300 && item.mtime <= created + 900)
     if (!psdFiles.value.length) {
       psdHint.value = result.dir ? '没有发现本次拆分产出的 PSD' : result.reason || '没找到 ComfyUI 输出目录'
+      return
     }
+    // 主 PSD（不带 _depth 的那个）拿来做图层预览
+    const main = psdFiles.value.find((file) => !/_depth\b/i.test(file.filename)) ?? psdFiles.value[0]
+    if (main) void loadPsdLayers(main.filename, main.subfolder || '')
   } catch (error) {
     psdHint.value = `读取 PSD 失败：${(error as Error).message}`
   }
+}
+
+async function loadPsdLayers(filename: string, subfolder: string): Promise<void> {
+  psdSource.value = { filename, subfolder }
+  psdLoading.value = true
+  psdError.value = ''
+  try {
+    const sheet = await window.api.comfy.psdLayers(filename, subfolder, 160)
+    psdLayers.value = sheet.layers
+    if (!sheet.layers.length) psdError.value = 'PSD 里没有图层'
+  } catch (error) {
+    psdError.value = `解析 PSD 失败：${(error as Error).message}`
+  } finally {
+    psdLoading.value = false
+  }
+}
+
+async function openLayer(layer: PsdLayer): Promise<void> {
+  const source = psdSource.value
+  if (!source) return
+  layerPreviewVisible.value = true
+  layerPreviewLoading.value = true
+  layerPreviewName.value = layer.name
+  layerPreviewDataUrl.value = ''
+  try {
+    const image = await window.api.comfy.psdLayerImage(source.filename, source.subfolder, layer.index)
+    layerPreviewDataUrl.value = image.dataUrl
+    layerPreviewSize.value = { width: image.width, height: image.height }
+  } catch (error) {
+    ElMessage.error(`读取图层失败：${(error as Error).message}`)
+    layerPreviewVisible.value = false
+  } finally {
+    layerPreviewLoading.value = false
+  }
+}
+
+function downloadLayerImage(): void {
+  if (!layerPreviewDataUrl.value) return
+  const link = document.createElement('a')
+  link.href = layerPreviewDataUrl.value
+  link.download = `${layerPreviewName.value || 'layer'}.png`
+  link.click()
 }
 
 async function downloadFile(filename: string, subfolder: string, storage: string): Promise<void> {
@@ -556,15 +648,35 @@ onBeforeUnmount(() => {
             {{ batchDialogItem.layers.length }} 个图层 · {{ formatTime(batchDialogItem.createdAt) }}
           </span>
         </div>
-        <div class="layer-list">
-          <div v-for="(layer, index) in batchDialogItem.layers" :key="layer.filename" class="layer-row">
-            <span class="layer-row__index num">{{ index + 1 }}</span>
-            <span class="layer-row__name" :title="layer.filename">{{ layer.label || layer.filename }}</span>
+        <div class="psd-layers">
+          <div class="psd-layers__head">
+            <strong>PSD 图层</strong>
+            <div class="psd-layers__meta">
+              <span class="text-muted">
+                {{ psdLoading ? '解析中…' : psdLayers.length ? `${visiblePsdLayers.length}/${psdLayers.length} 层 · 点击看大图` : psdError || '—' }}
+              </span>
+              <el-checkbox v-if="emptyLayerCount" v-model="hideEmptyLayers" size="small" label="隐藏空图层" />
+            </div>
           </div>
+          <div v-if="visiblePsdLayers.length" v-loading="psdLoading" class="layer-grid">
+            <button
+              v-for="layer in visiblePsdLayers"
+              :key="layer.index"
+              type="button"
+              class="layer-tile"
+              :title="`${layer.name}（${layer.width}×${layer.height}）`"
+              @click="openLayer(layer)"
+            >
+              <span class="layer-tile__img">
+                <img v-if="layer.thumb" :src="layer.thumb" :alt="layer.name" />
+                <span v-else class="layer-tile__empty">空</span>
+              </span>
+              <span class="layer-tile__name">{{ layer.name }}</span>
+            </button>
+          </div>
+          <div v-else-if="psdLoading" v-loading="psdLoading" class="layer-loading" />
+          <div v-else class="layer-hint">这次拆分没有非空图层（可关闭「隐藏空图层」查看全部）</div>
         </div>
-        <p class="layer-hint">
-          图层名来自 ComfyUI 合成器；实际的分层图在下面 PSD 里（ComfyUI 的临时分层预览是空白画布，所以这里只列名称）。
-        </p>
         <div class="psd-block">
           <div class="psd-block__head">
             <strong>PSD 文件</strong>
@@ -590,6 +702,23 @@ onBeforeUnmount(() => {
         <el-button @click="batchDialogVisible = false">关闭</el-button>
         <el-button v-if="batchDialogItem" type="danger" plain @click="removeBatch(batchDialogItem)">
           删除这次结果
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="layerPreviewVisible" :title="layerPreviewName" width="720px" append-to-body>
+      <div v-loading="layerPreviewLoading" class="layer-preview">
+        <img
+          v-if="layerPreviewDataUrl"
+          :src="layerPreviewDataUrl"
+          :alt="layerPreviewName"
+          :style="layerPreviewStyle"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="layerPreviewVisible = false">关闭</el-button>
+        <el-button type="primary" :icon="Download" :disabled="!layerPreviewDataUrl" @click="downloadLayerImage">
+          下载 PNG
         </el-button>
       </template>
     </el-dialog>
@@ -678,6 +807,102 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin-bottom: 10px;
   font-size: 13px;
+}
+
+.psd-layers {
+  margin-top: 2px;
+}
+
+.psd-layers__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.psd-layers__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.layer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+  max-height: 38vh;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.layer-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color var(--dur-fast) linear;
+}
+
+.layer-tile:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color));
+}
+
+.layer-tile__img {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  background:
+    repeating-conic-gradient(#1f2937 0% 25%, #0b1220 0% 50%) 50% / 14px 14px;
+}
+
+.layer-tile__img img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.layer-tile__empty {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.layer-tile__name {
+  padding: 0 6px 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.layer-loading {
+  min-height: 120px;
+}
+
+.layer-preview {
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+  max-height: 66vh;
+  overflow: auto;
+  background:
+    repeating-conic-gradient(#1f2937 0% 25%, #0b1220 0% 50%) 50% / 18px 18px;
+  border-radius: var(--radius-md);
+}
+
+.layer-preview img {
+  max-width: 100%;
+  max-height: 52vh;
+  object-fit: contain;
 }
 
 .layer-list {

@@ -6,3 +6,6 @@ fastapi>=0.110
 uvicorn>=0.27
 sqlalchemy>=2.0
 pydantic-settings>=2.0
+# PSD 解析（角色拆分结果的分层预览）
+psd-tools>=1.10
+Pillow>=10.0

@@ -41,6 +41,8 @@ import {
   listJobs,
   getJob,
   getOutput,
+  getPsdLayerImage,
+  getPsdLayers,
   listOutputFiles,
   uploadImage,
   uploadOutputForComfy,
@@ -407,6 +409,12 @@ export function registerIpc(): void {
   )
   ipcMain.handle(IPC.comfy.outputFiles, (_event, ext?: string, since?: number) =>
     listOutputFiles(ext, since)
+  )
+  ipcMain.handle(IPC.comfy.psdLayers, (_event, filename: string, subfolder: string, thumb?: number) =>
+    getPsdLayers(filename, subfolder, thumb)
+  )
+  ipcMain.handle(IPC.comfy.psdLayerImage, (_event, filename: string, subfolder: string, index: number) =>
+    getPsdLayerImage(filename, subfolder, index)
   )
   ipcMain.handle(IPC.comfy.open, () => openComfy())
 

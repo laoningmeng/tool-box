@@ -88,6 +88,8 @@ export const IPC = {
     uploadImage: 'comfy:upload-image',
     uploadOutput: 'comfy:upload-output',
     outputFiles: 'comfy:output-files',
+    psdLayers: 'comfy:psd-layers',
+    psdLayerImage: 'comfy:psd-layer-image',
     output: 'comfy:output',
     open: 'comfy:open'
   }

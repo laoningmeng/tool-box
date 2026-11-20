@@ -16,6 +16,8 @@ import type {
   ModelAction,
   ModelActionInput,
   ComfyOutputFileList,
+  PsdLayerImage,
+  PsdLayerSheet,
   DollCharacter,
   DollCharacterInput,
   MediaBatch,
@@ -155,6 +157,10 @@ const api: BridgeApi = {
       ipcRenderer.invoke(IPC.comfy.uploadOutput, filename, subfolder),
     outputFiles: (ext?: string, since?: number): Promise<ComfyOutputFileList> =>
       ipcRenderer.invoke(IPC.comfy.outputFiles, ext, since),
+    psdLayers: (filename: string, subfolder: string, thumb?: number): Promise<PsdLayerSheet> =>
+      ipcRenderer.invoke(IPC.comfy.psdLayers, filename, subfolder, thumb),
+    psdLayerImage: (filename: string, subfolder: string, index: number): Promise<PsdLayerImage> =>
+      ipcRenderer.invoke(IPC.comfy.psdLayerImage, filename, subfolder, index),
     output: (filename: string, subfolder: string, storage?: string): Promise<ComfyOutputData> =>
       ipcRenderer.invoke(IPC.comfy.output, filename, subfolder, storage),
     openComfy: (): Promise<void> => ipcRenderer.invoke(IPC.comfy.open)
