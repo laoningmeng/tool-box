@@ -149,10 +149,6 @@ function setScale(next: number, anchorX?: number, anchorY?: number): void {
     }
   }
   viewerScale.value = scale
-  if (scale <= 1) {
-    // 回到 1 倍以下时不再保留平移，避免图片跑出视野
-    viewerOffset.value = { x: 0, y: 0 }
-  }
 }
 
 function onViewerWheel(event: WheelEvent): void {
@@ -168,13 +164,17 @@ function onViewerWheel(event: WheelEvent): void {
   )
 }
 
-function onPanStart(event: MouseEvent): void {
-  if (viewerScale.value <= 1 || event.button !== 0) return
+function onPanStart(event: PointerEvent): void {
+  if (event.button !== 0) return
+  const el = viewerEl.value
   panning.value = true
   panStart.value = { x: event.clientX, y: event.clientY, ox: viewerOffset.value.x, oy: viewerOffset.value.y }
+  // 捕获指针：拖到窗口外也不会中断
+  el?.setPointerCapture?.(event.pointerId)
+  event.preventDefault()
 }
 
-function onPanMove(event: MouseEvent): void {
+function onPanMove(event: PointerEvent): void {
   if (!panning.value) return
   viewerOffset.value = {
     x: panStart.value.ox + (event.clientX - panStart.value.x),
@@ -182,8 +182,11 @@ function onPanMove(event: MouseEvent): void {
   }
 }
 
-function onPanEnd(): void {
+function onPanEnd(event?: PointerEvent): void {
+  if (!panning.value) return
   panning.value = false
+  const el = viewerEl.value
+  if (event && el?.hasPointerCapture?.(event.pointerId)) el.releasePointerCapture(event.pointerId)
 }
 
 function resetViewerTransform(): void {
@@ -327,10 +330,11 @@ onBeforeUnmount(() => {
         class="viewer"
         :class="{ 'is-panning': panning }"
         @wheel.prevent="onViewerWheel"
-        @mousedown="onPanStart"
-        @mousemove="onPanMove"
-        @mouseup="onPanEnd"
-        @mouseleave="onPanEnd"
+        @pointerdown="onPanStart"
+        @pointermove="onPanMove"
+        @pointerup="onPanEnd"
+        @pointercancel="onPanEnd"
+        @lostpointercapture="onPanEnd"
         @dblclick="resetViewerTransform"
       >
         <img
@@ -459,8 +463,9 @@ onBeforeUnmount(() => {
   background: #0b1220;
   border-radius: var(--radius-md);
   overflow: hidden;
-  cursor: default;
+  cursor: grab;
   user-select: none;
+  touch-action: none;
 }
 
 .viewer.is-panning {
@@ -475,6 +480,10 @@ onBeforeUnmount(() => {
   transform-origin: center center;
   will-change: transform;
   transition: transform 0.06s linear;
+}
+
+.viewer.is-panning img {
+  transition: none;
 }
 
 .viewer-footer {
