@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
+  Avatar,
   Box,
   Collection,
   Connection,
@@ -42,6 +43,16 @@ const navItems: NavItem[] = [
     ]
   },
   {
+    path: '/paperdoll',
+    title: '纸娃娃系统',
+    icon: Avatar,
+    children: [
+      { path: '/paperdoll', title: '角色列表' },
+      { path: '/paperdoll/parts', title: '部件库' },
+      { path: '/paperdoll/studio', title: '换装台' }
+    ]
+  },
+  {
     path: '/workflow',
     title: '工作流管理',
     icon: Connection,
@@ -60,7 +71,7 @@ const router = useRouter()
 
 const collapsed = computed(() => appStore.sidebarCollapsed)
 const activePath = computed(() => route.path)
-const expanded = ref<string[]>(['/models', '/workflow'])
+const expanded = ref<string[]>(['/models', '/workflow', '/paperdoll'])
 
 function isActive(path: string): boolean {
   return activePath.value === path || activePath.value.startsWith(`${path}/`)

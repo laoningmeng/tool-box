@@ -56,6 +56,24 @@ const router = createRouter({
           meta: { title: '流程列表', group: '工作流管理' }
         },
         {
+          path: 'paperdoll',
+          name: 'paperdoll',
+          component: () => import('@renderer/views/paperdoll/index.vue'),
+          meta: { title: '角色列表', group: '纸娃娃系统' }
+        },
+        {
+          path: 'paperdoll/parts',
+          name: 'paperdoll-parts',
+          component: () => import('@renderer/views/paperdoll/parts.vue'),
+          meta: { title: '部件库', group: '纸娃娃系统' }
+        },
+        {
+          path: 'paperdoll/studio',
+          name: 'paperdoll-studio',
+          component: () => import('@renderer/views/paperdoll/studio.vue'),
+          meta: { title: '换装台', group: '纸娃娃系统' }
+        },
+        {
           path: 'media',
           name: 'media',
           component: () => import('@renderer/views/media/index.vue'),
