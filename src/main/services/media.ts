@@ -1,4 +1,4 @@
-import type { ComfyJob, MediaItem, MediaKind, MediaSyncResult } from '../../shared/types'
+import type { ComfyJob, MediaBatch, MediaItem, MediaKind, MediaSyncResult } from '../../shared/types'
 import { getDb, now, persist } from '../store'
 import { log } from '../logger'
 import { getComfyHistory } from './comfy'
@@ -73,9 +73,55 @@ function hasFile(filename: string, subfolder: string): boolean {
 }
 
 /** 任务成功时登记它产出的文件（轮询到 success 就会走到这里） */
+export function listMediaBatches(): MediaBatch[] {
+  return [...(getDb().mediaBatches ?? [])].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+}
+
+export function removeMediaBatch(id: string): { ok: boolean } {
+  const db = getDb()
+  const before = db.mediaBatches.length
+  db.mediaBatches = db.mediaBatches.filter((item) => item.id !== id)
+  if (db.mediaBatches.length === before) return { ok: false }
+  persist()
+  return { ok: true }
+}
+
+/** 角色拆分：把一次产出的所有图层合成一个批次（不再散落成几十条图片记录） */
+function recordSplitBatch(job: ComfyJob): boolean {
+  const outputs = job.outputs ?? []
+  const layers = outputs.filter((item) => item.key === 'compositor_layers')
+  if (layers.length < 2) return false
+  const db = getDb()
+  const batchId = `batch_${job.id}`
+  if (db.mediaBatches.some((item) => item.id === batchId)) return true
+  const composite = outputs.find((item) => item.key === 'images')
+  const batch: MediaBatch = {
+    id: batchId,
+    jobId: job.id,
+    workflowId: job.workflowId,
+    workflowName: job.workflowName,
+    createdAt: now(),
+    cover: composite
+      ? { filename: composite.filename, subfolder: composite.subfolder ?? '', storage: composite.storage }
+      : { filename: layers[0].filename, subfolder: layers[0].subfolder ?? '', storage: layers[0].storage },
+    layers: layers.map((item) => ({
+      filename: item.filename,
+      subfolder: item.subfolder ?? '',
+      storage: item.storage,
+      label: item.label
+    }))
+  }
+  db.mediaBatches.unshift(batch)
+  if (db.mediaBatches.length > 200) db.mediaBatches = db.mediaBatches.slice(0, 200)
+  log('info', '角色拆分批次', `${job.workflowName || job.workflowId} · ${layers.length} 层`)
+  persist()
+  return true
+}
+
 export function recordMediaFromJob(job: ComfyJob): number {
   const db = getDb()
   let added = 0
+  if (recordSplitBatch(job)) return 0
   for (const output of job.outputs ?? []) {
     const subfolder = output.subfolder ?? ''
     if ((output as { storage?: string }).storage === 'temp') continue
@@ -122,6 +168,33 @@ export async function syncMediaFromHistory(): Promise<MediaSyncResult> {
   const cleaned = beforeCleanup - db.media.length
   let added = 0
   for (const entry of history) {
+    // 角色拆分：历史里的图层（temp compositor_layers）也归成一个批次
+    const layers = entry.outputs.filter((item) => item.key === 'compositor_layers')
+    if (layers.length >= 2) {
+      const batchId = `batch_hist_${entry.promptId}`
+      if (!db.mediaBatches.some((item) => item.id === batchId)) {
+        const composite = entry.outputs.find((item) => item.key === 'images')
+        db.mediaBatches.unshift({
+          id: batchId,
+          jobId: `hist_${entry.promptId}`,
+          workflowId: '',
+          workflowName: '角色拆分 · SeeThrough',
+          createdAt: entry.finishedAt ? new Date(entry.finishedAt).toISOString() : now(),
+          cover: composite
+            ? { filename: composite.filename, subfolder: composite.subfolder ?? '', storage: composite.storage }
+            : { filename: layers[0].filename, subfolder: layers[0].subfolder ?? '', storage: layers[0].storage },
+          layers: layers.map((item) => ({
+            filename: item.filename,
+            subfolder: item.subfolder ?? '',
+            storage: item.storage,
+            label: item.label
+          }))
+        })
+        if (db.mediaBatches.length > 200) db.mediaBatches = db.mediaBatches.slice(0, 200)
+        added += 1
+      }
+      continue
+    }
     for (const output of entry.outputs) {
       const subfolder = output.subfolder ?? ''
       if (hasFile(output.filename, subfolder)) continue

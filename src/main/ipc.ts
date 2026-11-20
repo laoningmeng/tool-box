@@ -41,6 +41,7 @@ import {
   listJobs,
   getJob,
   getOutput,
+  listOutputFiles,
   uploadImage,
   uploadOutputForComfy,
   openComfy,
@@ -50,8 +51,10 @@ import {
 import { parseWorkflowFile, uploadWorkflow, cancelJob } from './services/workflow'
 import {
   listMedia,
+  listMediaBatches,
   recordMediaFromJob,
   removeMedia,
+  removeMediaBatch,
   removeMediaMany,
   syncMediaFromHistory
 } from './services/media'
@@ -361,6 +364,8 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.media.sync, () => syncMediaFromHistory())
   ipcMain.handle(IPC.media.remove, (_event, id: string) => removeMedia(id))
   ipcMain.handle(IPC.media.removeMany, (_event, ids: string[]) => removeMediaMany(ids))
+  ipcMain.handle(IPC.media.batches, () => listMediaBatches())
+  ipcMain.handle(IPC.media.removeBatch, (_event, id: string) => removeMediaBatch(id))
   ipcMain.handle(IPC.comfy.status, () => getComfyStatus())
   ipcMain.handle(IPC.comfy.workflows, (_event, category?: WorkflowCategory) => listWorkflows(category))
   ipcMain.handle(IPC.comfy.parse, async (event, filePath?: string) =>
@@ -399,6 +404,9 @@ export function registerIpc(): void {
   )
   ipcMain.handle(IPC.comfy.output, (_event, filename: string, subfolder: string, storage?: string) =>
     getOutput(filename, subfolder, storage)
+  )
+  ipcMain.handle(IPC.comfy.outputFiles, (_event, ext?: string, since?: number) =>
+    listOutputFiles(ext, since)
   )
   ipcMain.handle(IPC.comfy.open, () => openComfy())
 

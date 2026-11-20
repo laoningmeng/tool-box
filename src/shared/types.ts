@@ -248,10 +248,42 @@ export interface ComfyJob {
   progress: number
   message: string
   logs: string[]
-  outputs: Array<{ filename: string; type: string; subfolder: string; bytes: number }>
+  outputs: Array<{
+    filename: string
+    type: string
+    subfolder: string
+    bytes: number
+    key?: string
+    label?: string
+    storage?: string
+  }>
   startedAt: number
   finishedAt: number | null
   elapsed: number
+}
+
+/** 角色拆分的一次产出：封面 + 所有图层归一组展示 */
+export interface MediaBatch {
+  id: string
+  jobId: string
+  workflowId: string
+  workflowName: string
+  createdAt: string
+  cover?: { filename: string; subfolder: string; storage?: string }
+  layers: Array<{ filename: string; subfolder: string; storage?: string; label?: string }>
+}
+
+export interface ComfyOutputFile {
+  filename: string
+  subfolder?: string
+  bytes: number
+  mtime: number
+}
+
+export interface ComfyOutputFileList {
+  dir: string
+  files: ComfyOutputFile[]
+  reason?: string
 }
 
 /** 媒体库条目：工作流生成结果的文件引用 */
@@ -311,6 +343,9 @@ export interface MediaApi {
   remove(id: string): Promise<{ ok: boolean }>
   /** 批量删除记录 */
   removeMany(ids: string[]): Promise<{ removed: number }>
+  /** 角色拆分批次 */
+  batches(): Promise<MediaBatch[]>
+  removeBatch(id: string): Promise<{ ok: boolean }>
 }
 
 export interface ComfyOutputData {
@@ -618,6 +653,8 @@ export interface ComfyApi {
   uploadImage(): Promise<{ ok: boolean; canceled?: boolean; name?: string }>
   /** 把媒体库（ComfyUI output）里的图片复制到 input，作为参考图 */
   uploadOutput(filename: string, subfolder: string): Promise<{ ok: boolean; name?: string }>
+  /** 列出 ComfyUI 输出目录里的文件（PSD 等） */
+  outputFiles(ext?: string, since?: number): Promise<ComfyOutputFileList>
   output(filename: string, subfolder: string, storage?: string): Promise<ComfyOutputData>
   openComfy(): Promise<void>
 }

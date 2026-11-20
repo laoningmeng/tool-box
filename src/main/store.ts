@@ -6,6 +6,7 @@ import type {
   ComfyWorkflow,
   ModelAsset,
   DollCharacter,
+  MediaBatch,
   MediaItem,
   ModelConfigStored,
   ResourceItem
@@ -41,6 +42,8 @@ export interface Database {
   dollCharacters: DollCharacter[]
   /** 用户移除过的媒体（subfolder/filename）：同步历史时不再自动补回 */
   deletedMediaKeys: string[]
+  /** 角色拆分批次（一次拆分的所有图层归一组） */
+  mediaBatches: MediaBatch[]
 }
 
 const DB_VERSION = 2
@@ -124,7 +127,8 @@ function seedDatabase(): Database {
     deletedBuiltinIds: [],
     media: [],
     dollCharacters: [],
-    deletedMediaKeys: []
+    deletedMediaKeys: [],
+    mediaBatches: []
   }
 }
 
@@ -190,7 +194,8 @@ function mergeDefaults(raw: Partial<Database>): Database {
     deletedBuiltinIds: Array.isArray(raw.deletedBuiltinIds) ? raw.deletedBuiltinIds : [],
     media: Array.isArray(raw.media) ? (raw.media as MediaItem[]) : [],
     dollCharacters: Array.isArray(raw.dollCharacters) ? (raw.dollCharacters as DollCharacter[]) : [],
-    deletedMediaKeys: Array.isArray(raw.deletedMediaKeys) ? raw.deletedMediaKeys : []
+    deletedMediaKeys: Array.isArray(raw.deletedMediaKeys) ? raw.deletedMediaKeys : [],
+    mediaBatches: Array.isArray(raw.mediaBatches) ? (raw.mediaBatches as MediaBatch[]) : []
   }
 }
 

@@ -15,8 +15,10 @@ import type {
   ComfyWorkflow,
   ModelAction,
   ModelActionInput,
+  ComfyOutputFileList,
   DollCharacter,
   DollCharacterInput,
+  MediaBatch,
   MediaItem,
   MediaSyncResult,
   ModelBonePose,
@@ -151,6 +153,8 @@ const api: BridgeApi = {
       ipcRenderer.invoke(IPC.comfy.uploadImage),
     uploadOutput: (filename: string, subfolder: string): Promise<{ ok: boolean; name?: string }> =>
       ipcRenderer.invoke(IPC.comfy.uploadOutput, filename, subfolder),
+    outputFiles: (ext?: string, since?: number): Promise<ComfyOutputFileList> =>
+      ipcRenderer.invoke(IPC.comfy.outputFiles, ext, since),
     output: (filename: string, subfolder: string, storage?: string): Promise<ComfyOutputData> =>
       ipcRenderer.invoke(IPC.comfy.output, filename, subfolder, storage),
     openComfy: (): Promise<void> => ipcRenderer.invoke(IPC.comfy.open)
@@ -160,7 +164,9 @@ const api: BridgeApi = {
     sync: (): Promise<MediaSyncResult> => ipcRenderer.invoke(IPC.media.sync),
     remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.media.remove, id),
     removeMany: (ids: string[]): Promise<{ removed: number }> =>
-      ipcRenderer.invoke(IPC.media.removeMany, ids)
+      ipcRenderer.invoke(IPC.media.removeMany, ids),
+    batches: (): Promise<MediaBatch[]> => ipcRenderer.invoke(IPC.media.batches),
+    removeBatch: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.media.removeBatch, id)
   },
   doll: {
     list: (): Promise<DollCharacter[]> => ipcRenderer.invoke(IPC.doll.list),

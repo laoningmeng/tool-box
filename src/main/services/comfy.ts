@@ -108,7 +108,15 @@ export async function listJobs(category?: WorkflowCategory): Promise<ComfyJob[]>
 export interface ComfyHistoryEntry {
   promptId: string
   finishedAt: number | null
-  outputs: Array<{ filename: string; subfolder: string; type: string; bytes: number }>
+  outputs: Array<{
+    filename: string
+    subfolder: string
+    type: string
+    bytes: number
+    key?: string
+    label?: string
+    storage?: string
+  }>
 }
 
 /** 拉 ComfyUI 的历史输出（媒体库同步用） */
@@ -154,6 +162,32 @@ export async function uploadOutputForComfy(
   })
   if (!data.item?.name) throw new Error('上传失败')
   return { ok: true, name: data.item.name }
+}
+
+/** 列出 ComfyUI 输出目录里的文件（角色拆分产出的 PSD） */
+export async function listOutputFiles(
+  ext = 'psd',
+  since?: number
+): Promise<{
+  dir: string
+  files: Array<{ filename: string; subfolder?: string; bytes: number; mtime: number }>
+  reason?: string
+}> {
+  await ensureBackend()
+  const params = new URLSearchParams({ ext })
+  if (since) params.set('since', String(since))
+  const data = await pythonRunner.request<
+    ApiEnvelope<{
+      dir: string
+      files: Array<{ filename: string; subfolder?: string; bytes: number; mtime: number }>
+      reason?: string
+    }>
+  >({
+    method: 'GET',
+    path: `/api/comfy/output-files?${params.toString()}`,
+    timeout: 20000
+  })
+  return data.item ?? { dir: '', files: [] }
 }
 
 export async function uploadImage(

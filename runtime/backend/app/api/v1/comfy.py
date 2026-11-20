@@ -7,6 +7,8 @@ ComfyUI 的 HTTP 轮询本身是阻塞的，这里不占用 FastAPI 的事件循
 
 from __future__ import annotations
 
+import os
+import re
 import threading
 import time
 import uuid
@@ -50,27 +52,40 @@ def _public_job(job: dict[str, Any]) -> dict[str, Any]:
 def _collect_outputs(entry: dict[str, Any]) -> list[dict[str, Any]]:
     outputs: list[dict[str, Any]] = []
     for node_output in (entry.get("outputs") or {}).values():
-        for key in ("images", "gifs", "videos", "audio"):
-            for item in node_output.get(key) or []:
+        # 角色拆分（JZL_SeeThrough）把图层放在 compositor_layers，名称在 compositor_bboxes
+        labels = [
+            str(box.get("name") or "")
+            for box in (node_output.get("compositor_bboxes") or [])
+            if isinstance(box, dict)
+        ]
+        for key in ("images", "gifs", "videos", "audio", "compositor_layers"):
+            items = node_output.get(key) or []
+            for index, item in enumerate(items):
+                if not isinstance(item, dict):
+                    continue
                 name = item.get("filename")
                 if not name:
                     continue
                 lower = str(name).lower()
-                outputs.append(
-                    {
-                        "filename": name,
-                        "storage": str(item.get("type") or "output"),
-                        "type": (
-                            "video"
-                            if lower.endswith((".webp", ".mp4", ".webm", ".gif", ".mov"))
-                            else "audio"
-                            if lower.endswith((".mp3", ".wav", ".flac", ".ogg", ".m4a", ".opus"))
-                            else "image"
-                        ),
-                        "subfolder": item.get("subfolder") or "",
-                        "bytes": 0,
-                    }
-                )
+                output: dict[str, Any] = {
+                    "filename": name,
+                    "storage": str(item.get("type") or "output"),
+                    "key": key,
+                    "type": (
+                        "video"
+                        if lower.endswith((".webp", ".mp4", ".webm", ".gif", ".mov"))
+                        else "audio"
+                        if lower.endswith((".mp3", ".wav", ".flac", ".ogg", ".m4a", ".opus"))
+                        else "file"
+                        if lower.endswith((".psd", ".json", ".txt", ".zip"))
+                        else "image"
+                    ),
+                    "subfolder": item.get("subfolder") or "",
+                    "bytes": 0,
+                }
+                if key == "compositor_layers" and index < len(labels) and labels[index]:
+                    output["label"] = labels[index]
+                outputs.append(output)
     return outputs
 
 
@@ -224,6 +239,104 @@ def comfy_history(max_items: int = Query(200, ge=1, le=1000)) -> dict[str, Any]:
         items.append({"promptId": prompt_id, "finishedAt": finished_at, "outputs": outputs})
     items.sort(key=lambda row: row.get("finishedAt") or 0, reverse=True)
     return ok_list(items)
+
+_OUTPUT_DIR_CACHE: dict[str, str | None] = {}
+
+
+def _detect_output_dir() -> str | None:
+    """尽量找到 ComfyUI 的输出目录：环境变量 → 进程命令行 → 常见路径。"""
+    if "dir" in _OUTPUT_DIR_CACHE:
+        return _OUTPUT_DIR_CACHE["dir"]
+    candidates: list[str] = []
+    env_dir = os.environ.get("COMFY_OUTPUT_DIR", "").strip()
+    if env_dir:
+        candidates.append(env_dir)
+    try:
+        import subprocess  # noqa: PLC0415 - 只在本机探测时用
+
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+                "Select-Object -ExpandProperty CommandLine) -join [Environment]::NewLine",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+        for line in (result.stdout or "").splitlines():
+            match = re.search(r"--output-directory\s+\"?([^\"\s]+)", line)
+            if match:
+                candidates.append(match.group(1))
+    except Exception:  # noqa: BLE001 - 探测失败就走常见路径
+        pass
+    if os.name == "nt":
+        candidates += [
+            os.path.expanduser("~\\ComfyUI\\output"),
+            "D:\\workspace\\comfyui_output",
+            "D:\\ComfyUI\\output",
+            "C:\\ComfyUI\\output",
+        ]
+    for candidate in candidates:
+        try:
+            if candidate and os.path.isdir(candidate):
+                _OUTPUT_DIR_CACHE["dir"] = candidate
+                return candidate
+        except OSError:
+            continue
+    _OUTPUT_DIR_CACHE["dir"] = None
+    return None
+
+
+@router.get("/output-files", summary="列出 ComfyUI 输出目录里的文件（角色拆分产出的 PSD 等）")
+def output_files(ext: str = "psd", since: float | None = None, limit: int = 30) -> dict[str, Any]:
+    directory = _detect_output_dir()
+    if not directory:
+        return ok({"dir": "", "files": [], "reason": "没找到 ComfyUI 输出目录"})
+    suffix = "." + ext.lstrip(".").lower()
+    files: list[dict[str, Any]] = []
+    try:
+        entries = list(os.scandir(directory))
+    except OSError as error:
+        return ok({"dir": directory, "files": [], "reason": str(error)})
+    # 角色拆分的 PSD 落在子目录（如 «图像分层»），这里向下扫两层
+    scanned: list[tuple[str, str]] = []
+    for item in entries:
+        try:
+            if item.is_file():
+                scanned.append(("", item.name))
+                continue
+            if not item.is_dir():
+                continue
+            for child in os.scandir(item.path):
+                if child.is_file():
+                    scanned.append((item.name, child.name))
+        except OSError:
+            continue
+    for subfolder, name in scanned:
+        if not name.lower().endswith(suffix):
+            continue
+        full = os.path.join(directory, subfolder, name) if subfolder else os.path.join(directory, name)
+        try:
+            stat = os.stat(full)
+        except OSError:
+            continue
+        if since and stat.st_mtime < since - 5:
+            continue
+        files.append(
+            {
+                "filename": name,
+                "subfolder": subfolder,
+                "bytes": stat.st_size,
+                "mtime": stat.st_mtime,
+            }
+        )
+    files.sort(key=lambda row: row["mtime"], reverse=True)
+    return ok({"dir": directory, "files": files[: max(1, min(limit, 100))]})
+
 
 @router.post("/upload-output", summary="把输出目录里的文件复制到 input（从媒体库选参考图）")
 def upload_output(payload: dict[str, Any]) -> dict[str, Any]:

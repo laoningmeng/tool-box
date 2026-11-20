@@ -71,7 +71,9 @@ export const IPC = {
     list: 'media:list',
     sync: 'media:sync',
     remove: 'media:remove',
-    removeMany: 'media:remove-many'
+    removeMany: 'media:remove-many',
+    batches: 'media:batches',
+    removeBatch: 'media:remove-batch'
   },
   comfy: {
     status: 'comfy:status',
@@ -85,6 +87,7 @@ export const IPC = {
     cancel: 'comfy:cancel',
     uploadImage: 'comfy:upload-image',
     uploadOutput: 'comfy:upload-output',
+    outputFiles: 'comfy:output-files',
     output: 'comfy:output',
     open: 'comfy:open'
   }

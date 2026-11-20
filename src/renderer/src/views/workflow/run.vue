@@ -93,7 +93,11 @@ const imageMedia = computed(() => mediaItems.value.filter((item) => item.type ==
 async function loadMediaPreview(item: MediaItem): Promise<void> {
   if (mediaPreviews.value[item.id]) return
   try {
-    const data = await window.api.comfy.output(item.filename, item.subfolder)
+    const data = await window.api.comfy.output(
+      item.filename,
+      item.subfolder,
+      (item as { storage?: string }).storage || 'output'
+    )
     mediaPreviews.value = { ...mediaPreviews.value, [item.id]: data.dataUrl }
   } catch {
     /* 预览失败忽略 */

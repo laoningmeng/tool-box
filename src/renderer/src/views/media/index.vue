@@ -1,15 +1,25 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Download, Delete, Picture, Refresh, VideoCamera, Headset, RefreshRight } from '@element-plus/icons-vue'
+import {
+  Check,
+  Delete,
+  Download,
+  Files,
+  Headset,
+  Picture,
+  Refresh,
+  RefreshRight,
+  VideoCamera
+} from '@element-plus/icons-vue'
 import { WORKFLOW_CATEGORY_META } from '@shared/constants'
-import type { MediaItem, MediaKind, WorkflowCategory } from '@shared/types'
+import type { ComfyOutputFile, MediaBatch, MediaItem, MediaKind, WorkflowCategory } from '@shared/types'
 
 /** 媒体库：工作流生成的图片 / 视频 / 音频都会汇总到这里 */
 const items = ref<MediaItem[]>([])
 const loading = ref(false)
 const syncing = ref(false)
-const activeType = ref<MediaKind | 'all'>('all')
+const activeType = ref<MediaTab>('all')
 const previews = ref<Record<string, string>>({})
 const previewErrors = ref<Record<string, boolean>>({})
 const selectedIds = ref<string[]>([])
@@ -17,15 +27,26 @@ const removing = ref(false)
 
 const selectedSet = computed(() => new Set(selectedIds.value))
 
-const tabs: Array<{ value: MediaKind | 'all'; label: string; icon: unknown }> = [
+type MediaTab = MediaKind | 'all' | 'batch'
+
+const tabs: Array<{ value: MediaTab; label: string; icon: unknown }> = [
   { value: 'all', label: '全部', icon: Picture },
   { value: 'image', label: '图片', icon: Picture },
   { value: 'video', label: '视频', icon: VideoCamera },
-  { value: 'audio', label: '音频', icon: Headset }
+  { value: 'audio', label: '音频', icon: Headset },
+  { value: 'batch', label: '拆分结果', icon: Files }
 ]
 
+const batches = ref<MediaBatch[]>([])
+const batchCovers = ref<Record<string, string>>({})
+const batchDialogVisible = ref(false)
+const batchDialogItem = ref<MediaBatch | null>(null)
+const psdFiles = ref<ComfyOutputFile[]>([])
+const psdDir = ref('')
+const psdHint = ref('')
+
 const counts = computed(() => {
-  const map: Record<string, number> = { all: items.value.length, image: 0, video: 0, audio: 0 }
+  const map: Record<string, number> = { all: items.value.length, image: 0, video: 0, audio: 0, batch: batches.value.length }
   for (const item of items.value) map[item.type] = (map[item.type] ?? 0) + 1
   return map
 })
@@ -70,6 +91,7 @@ async function refresh(sync = false): Promise<void> {
     }
     items.value = await window.api.media.list()
     for (const item of items.value.slice(0, 60)) void loadPreview(item)
+    await refreshBatches()
   } catch (error) {
     ElMessage.error(`加载失败：${(error as Error).message}`)
   } finally {
@@ -146,6 +168,88 @@ async function handleRemove(item: MediaItem): Promise<void> {
     await refresh()
     ElMessage.success('已移除记录')
   }
+}
+
+/* ------------------------------ 角色拆分批次 ------------------------------ */
+
+const LAYER_STORAGE = (layer: { storage?: string }): string => layer.storage || 'temp'
+
+async function loadBatchCover(batch: MediaBatch): Promise<void> {
+  if (!batch.cover || batchCovers.value[batch.id]) return
+  try {
+    const data = await window.api.comfy.output(
+      batch.cover.filename,
+      batch.cover.subfolder,
+      batch.cover.storage || 'output'
+    )
+    batchCovers.value = { ...batchCovers.value, [batch.id]: data.dataUrl }
+  } catch {
+    /* 封面失败不影响列表 */
+  }
+}
+
+async function refreshBatches(): Promise<void> {
+  batches.value = await window.api.media.batches()
+  for (const batch of batches.value.slice(0, 20)) void loadBatchCover(batch)
+}
+
+async function openBatch(batch: MediaBatch): Promise<void> {
+  batchDialogItem.value = batch
+  batchDialogVisible.value = true
+  psdFiles.value = []
+  psdHint.value = ''
+  void loadPsdFiles(batch)
+}
+
+async function loadPsdFiles(batch: MediaBatch): Promise<void> {
+  try {
+    const created = new Date(batch.createdAt).getTime() / 1000
+    const result = await window.api.comfy.outputFiles('psd', created - 300)
+    psdDir.value = result.dir
+    // 只保留这次拆分前后一段时间内的 PSD，避免把历史文件都列出来
+    psdFiles.value = result.files.filter((item) => item.mtime >= created - 300 && item.mtime <= created + 900)
+    if (!psdFiles.value.length) {
+      psdHint.value = result.dir ? '没有发现本次拆分产出的 PSD' : result.reason || '没找到 ComfyUI 输出目录'
+    }
+  } catch (error) {
+    psdHint.value = `读取 PSD 失败：${(error as Error).message}`
+  }
+}
+
+async function downloadFile(filename: string, subfolder: string, storage: string): Promise<void> {
+  try {
+    const data = await window.api.comfy.output(filename, subfolder, storage)
+    const link = document.createElement('a')
+    link.href = data.dataUrl
+    link.download = filename
+    link.click()
+  } catch (error) {
+    ElMessage.error(`下载失败：${(error as Error).message}`)
+  }
+}
+
+async function removeBatch(batch: MediaBatch): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`删除这次拆分结果（${batch.layers.length} 层）？ComfyUI 里的原文件不会被删除。`, '删除拆分结果', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+  const result = await window.api.media.removeBatch(batch.id)
+  if (result.ok) {
+    ElMessage.success('已删除')
+    batchDialogVisible.value = false
+    await refreshBatches()
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return '—'
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${Math.round(bytes / 1024)} KB`
 }
 
 function download(item: MediaItem): void {
@@ -322,8 +426,10 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div class="list-bar">
-          <span class="text-muted">{{ items.length }} 个结果</span>
-          <template v-if="filtered.length">
+          <span class="text-muted">
+            {{ activeType === 'batch' ? `${batches.length} 次拆分` : `${items.length} 个结果` }}
+          </span>
+          <template v-if="activeType !== 'batch' && filtered.length">
             <el-button size="small" @click="toggleSelectAll">
               {{ allSelected ? '取消全选' : '全选' }}
             </el-button>
@@ -344,8 +450,43 @@ onBeforeUnmount(() => {
       </header>
 
       <div class="panel__body">
-        <el-empty v-if="!filtered.length" description="还没有生成结果，去「执行流程」页跑一个工作流吧" />
-        <div v-else class="media-grid">
+        <template v-if="activeType === 'batch'">
+          <el-empty
+            v-if="!batches.length"
+            description="还没有拆分结果：去「执行流程」跑一次「角色拆分 · SeeThrough」，图层会自动归成一个批次"
+          />
+          <div v-else class="media-grid">
+            <article
+              v-for="batch in batches"
+              :key="batch.id"
+              class="media-card batch-card"
+              @click="openBatch(batch)"
+            >
+              <div class="media-card__preview">
+                <img
+                  v-if="batchCovers[batch.id]"
+                  :src="batchCovers[batch.id]"
+                  :alt="batch.workflowName"
+                  class="media-card__image"
+                  loading="lazy"
+                />
+                <div v-else class="batch-card__empty">拆分结果</div>
+                <span class="batch-card__badge">{{ batch.layers.length }} 层</span>
+              </div>
+              <div class="media-card__body">
+                <strong class="media-card__name mono">{{ batch.workflowName || '角色拆分' }}</strong>
+                <span class="media-card__time num">{{ formatTime(batch.createdAt) }}</span>
+                <div class="media-card__actions" @click.stop>
+                  <el-button link type="primary" size="small" @click="openBatch(batch)">查看图层</el-button>
+                  <el-button link type="danger" size="small" :icon="Delete" @click="removeBatch(batch)">删除</el-button>
+                </div>
+              </div>
+            </article>
+          </div>
+        </template>
+        <template v-else>
+          <el-empty v-if="!filtered.length" description="还没有生成结果，去「执行流程」页跑一个工作流吧" />
+          <div v-else class="media-grid">
           <article
             v-for="item in filtered"
             :key="item.id"
@@ -401,9 +542,57 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </article>
-        </div>
+          </div>
+        </template>
       </div>
     </section>
+
+    <!-- 拆分结果：图层 + PSD -->
+    <el-dialog v-model="batchDialogVisible" title="拆分结果" width="860px" append-to-body>
+      <template v-if="batchDialogItem">
+        <div class="batch-head">
+          <strong>{{ batchDialogItem.workflowName || '角色拆分' }}</strong>
+          <span class="text-muted">
+            {{ batchDialogItem.layers.length }} 个图层 · {{ formatTime(batchDialogItem.createdAt) }}
+          </span>
+        </div>
+        <div class="layer-list">
+          <div v-for="(layer, index) in batchDialogItem.layers" :key="layer.filename" class="layer-row">
+            <span class="layer-row__index num">{{ index + 1 }}</span>
+            <span class="layer-row__name" :title="layer.filename">{{ layer.label || layer.filename }}</span>
+          </div>
+        </div>
+        <p class="layer-hint">
+          图层名来自 ComfyUI 合成器；实际的分层图在下面 PSD 里（ComfyUI 的临时分层预览是空白画布，所以这里只列名称）。
+        </p>
+        <div class="psd-block">
+          <div class="psd-block__head">
+            <strong>PSD 文件</strong>
+            <span class="text-muted">{{ psdFiles.length ? `${psdFiles.length} 个` : psdHint }}</span>
+          </div>
+          <div v-if="psdFiles.length" class="psd-list">
+            <div v-for="file in psdFiles" :key="file.filename" class="psd-row">
+              <span class="mono">{{ file.filename }}</span>
+              <span class="text-muted num">{{ formatBytes(file.bytes) }}</span>
+              <el-button
+                link
+                type="primary"
+                size="small"
+                @click="downloadFile(file.filename, file.subfolder || '', 'output')"
+              >
+                下载
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <el-button @click="batchDialogVisible = false">关闭</el-button>
+        <el-button v-if="batchDialogItem" type="danger" plain @click="removeBatch(batchDialogItem)">
+          删除这次结果
+        </el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="viewerVisible"
@@ -459,6 +648,113 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.batch-card {
+  cursor: pointer;
+}
+
+.batch-card__empty {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1 / 1;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  background: var(--bg-subtle);
+}
+
+.batch-card__badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(11, 18, 32, 0.62);
+  color: #e2e8f0;
+  font-size: 10.5px;
+}
+
+.batch-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+
+.layer-row__index {
+  min-width: 22px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.layer-row__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}
+
+.psd-block {
+  margin-top: 14px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 10px;
+}
+
+.psd-block__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.psd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.psd-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: 11.5px;
+}
+
 .list-bar {
   display: flex;
   align-items: center;
