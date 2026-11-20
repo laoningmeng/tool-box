@@ -15,6 +15,8 @@ import type {
   ComfyWorkflow,
   ModelAction,
   ModelActionInput,
+  DollCharacter,
+  DollCharacterInput,
   MediaItem,
   MediaSyncResult,
   ModelBonePose,
@@ -155,6 +157,11 @@ const api: BridgeApi = {
     list: (): Promise<MediaItem[]> => ipcRenderer.invoke(IPC.media.list),
     sync: (): Promise<MediaSyncResult> => ipcRenderer.invoke(IPC.media.sync),
     remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.media.remove, id)
+  },
+  doll: {
+    list: (): Promise<DollCharacter[]> => ipcRenderer.invoke(IPC.doll.list),
+    create: (input: DollCharacterInput): Promise<DollCharacter> => ipcRenderer.invoke(IPC.doll.create, input),
+    remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.doll.remove, id)
   }
 }
 

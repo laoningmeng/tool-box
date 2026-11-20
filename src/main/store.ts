@@ -5,6 +5,7 @@ import type {
   AppSettings,
   ComfyWorkflow,
   ModelAsset,
+  DollCharacter,
   MediaItem,
   ModelConfigStored,
   ResourceItem
@@ -36,6 +37,8 @@ export interface Database {
   deletedBuiltinIds: string[]
   /** 媒体库：工作流生成结果的引用 */
   media: MediaItem[]
+  /** 纸娃娃角色 */
+  dollCharacters: DollCharacter[]
 }
 
 const DB_VERSION = 2
@@ -117,7 +120,8 @@ function seedDatabase(): Database {
     models: [],
     modelConfig: { ...defaultModelConfig },
     deletedBuiltinIds: [],
-    media: []
+    media: [],
+    dollCharacters: []
   }
 }
 
@@ -181,7 +185,8 @@ function mergeDefaults(raw: Partial<Database>): Database {
     models: Array.isArray(raw.models) ? (raw.models as ModelAsset[]) : base.models,
     modelConfig: { ...base.modelConfig, ...(raw.modelConfig ?? {}) },
     deletedBuiltinIds: Array.isArray(raw.deletedBuiltinIds) ? raw.deletedBuiltinIds : [],
-    media: Array.isArray(raw.media) ? (raw.media as MediaItem[]) : []
+    media: Array.isArray(raw.media) ? (raw.media as MediaItem[]) : [],
+    dollCharacters: Array.isArray(raw.dollCharacters) ? (raw.dollCharacters as DollCharacter[]) : []
   }
 }
 

@@ -62,6 +62,11 @@ export const IPC = {
     runtime: 'python:runtime',
     restart: 'python:restart'
   },
+  doll: {
+    list: 'doll:list',
+    create: 'doll:create',
+    remove: 'doll:remove'
+  },
   media: {
     list: 'media:list',
     sync: 'media:sync',

@@ -48,6 +48,7 @@ import {
 } from './services/comfy'
 import { parseWorkflowFile, uploadWorkflow, cancelJob } from './services/workflow'
 import { listMedia, recordMediaFromJob, removeMedia, syncMediaFromHistory } from './services/media'
+import { createDollCharacter, listDollCharacters, removeDollCharacter } from './services/doll'
 import {
   exportModelGroup,
   getModelConfigView,
@@ -344,6 +345,11 @@ export function registerIpc(): void {
   })
 
   /* -------------------------------- ComfyUI -------------------------------- */
+  ipcMain.handle(IPC.doll.list, () => listDollCharacters())
+  ipcMain.handle(IPC.doll.create, (_event, input: Parameters<typeof createDollCharacter>[0]) =>
+    createDollCharacter(input)
+  )
+  ipcMain.handle(IPC.doll.remove, (_event, id: string) => removeDollCharacter(id))
   ipcMain.handle(IPC.media.list, () => listMedia())
   ipcMain.handle(IPC.media.sync, () => syncMediaFromHistory())
   ipcMain.handle(IPC.media.remove, (_event, id: string) => removeMedia(id))

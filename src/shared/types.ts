@@ -271,6 +271,32 @@ export interface MediaItem {
   createdAt: string
 }
 
+/** 纸娃娃角色：名字 + 从媒体库挑选的素材 */
+export interface DollCharacterImage {
+  mediaId: string
+  filename: string
+  subfolder: string
+}
+
+export interface DollCharacter {
+  id: string
+  name: string
+  images: DollCharacterImage[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DollCharacterInput {
+  name: string
+  images: DollCharacterImage[]
+}
+
+export interface DollApi {
+  list(): Promise<DollCharacter[]>
+  create(input: DollCharacterInput): Promise<DollCharacter>
+  remove(id: string): Promise<{ ok: boolean }>
+}
+
 export interface MediaSyncResult {
   added: number
   total: number
@@ -600,4 +626,5 @@ export interface BridgeApi {
   python: PythonApi
   comfy: ComfyApi
   media: MediaApi
+  doll: DollApi
 }
